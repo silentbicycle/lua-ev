@@ -6,13 +6,21 @@ print("Supported: ", evc.supported_backends())
 print("Recommended: ", evc.recommended_backends())
 
 local loop = evc.default_loop()
+print("loop: ", loop)
 
-local tim = evc.timer_init(loop, 1)
+local tim = loop:timer_init(2)
+print("timer: ", tim)
+
 print(loop, tim)
-evc.set_cb(tim, function (w, ev) print("YAY", ev) end)
+tim:set_cb(function (w, ev)
+              print("YAY", w, ev)
+           end)
+
 print "set cb"
-evc.timer_start(loop, tim)
+loop:timer_start(tim)
 print "timer started"
 
 print "about to loop"
-evc.loop(loop)
+loop:loop()
+
+print "Done"

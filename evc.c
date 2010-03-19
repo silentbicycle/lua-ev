@@ -56,16 +56,13 @@ static int lev_sleep(lua_State *L) {
 
 static int lev_default_loop(lua_State *L) {
         int flags = luaL_optint(L, 1, 0);
-/*         Lev_loop *lev_loop = (Lev_loop *)lua_newuserdata(L, sizeof(Lev_loop)); */
-        struct ev_loop *loop;
-        loop = ev_default_loop(flags);
+        Lev_loop *lev_loop = (Lev_loop *)lua_newuserdata(L, sizeof(Lev_loop));
+        struct ev_loop *loop = ev_default_loop(flags);
+        lev_loop->t = loop;
         ev_set_userdata(loop, L);  /* so event loop knows the Lua state for callbacks*/
-/*         lev_loop->t = loop; */
-/*         luaL_getmetatable(L, "Lev_loop"); */
-/*         lua_setmetatable(L, -2); */
-/*         lua_insert(L, 1);       /\* put loop @ 1 *\/ */
-        lua_pushlightuserdata(L, loop);
-        return 1;
+        luaL_getmetatable(L, "Lev_loop");
+        lua_setmetatable(L, -2);
+        return 1;               /* leaving the loop */
 }
 
 
@@ -103,10 +100,10 @@ static int lev_now_update(lua_State *L) {
 
 
 static int lev_loop(lua_State *L) {
-        struct ev_loop *loop = (void *)lua_topointer(L, 1);
+        Lev_loop *loop = check_ev_loop(L, 1);
         int flags = luaL_optint(L, 2, 0);
         puts("Starting loop...\n");
-        ev_loop(loop, flags);
+        ev_loop(loop->t, flags);
         return 0;
 }
 
@@ -248,45 +245,41 @@ static int lev_set_priority(lua_State *L) {
 
 static void call_luafun_cb(struct ev_loop *l, ev_watcher *w, int events) {
         lua_State *L = ev_userdata(l);
-        lua_State *Coro = (lua_State *)w->data;
-        printf("in call_luafun_cb - %d 0x%lx 0x%lx\n",
-            events, (long) L, (long) Coro);
-        if (Coro != NULL) {
+        lua_pushlightuserdata(L, w);
+        lua_gettable(L, LUA_REGISTRYINDEX);
+        if (lua_isthread(L, -1)) {
                 puts("About to resume coroutine\n");
+                lua_State *Coro = (void *)lua_topointer(L, -1);
+                if (Coro == NULL) printf("CRAP\n");
                 lua_pushlightuserdata(Coro, w);
                 lua_pushinteger(Coro, events);
                 lua_resume(Coro, 2);
-        } else {
+        } else if (lua_isfunction(L, -1)) {
                 puts("About to call Lua callback fun\n");
-                lua_pushlightuserdata(L, w);
-                lua_gettable(L, LUA_REGISTRYINDEX);
-                if (!lua_isfunction(L, -1)) {
-                        printf("Type: %d\n", lua_type(L, -1));
-                        lua_pushstring(L, "not a function");
-                        lua_error(L);
-                }
                 lua_pushlightuserdata(L, w);
                 lua_pushinteger(L, events);
                 lua_pcall(L, 2, 0, 0);
+        } else {
+                lua_pushstring(L, "Not a coroutine or function");
+                lua_error(L);
         }
 }
 
 
 /* Set a callback: [ ev_watcher *w, luafun or coro ] */
 static int lev_set_cb(lua_State *L) {
-        if (!lua_isuserdata(L, 1)) {
-                lua_pushstring(L, "not a userdata(should be ev_watcher*)");
-                lua_error(L);
-        }
-        ev_watcher *w = (ev_watcher *) lua_topointer(L, 1);
-
+        /* settable: t k v -> t[k] = v */
+        Lev_watcher *watcher = check_ev_watcher(L, 1);
+        ev_watcher *w = watcher->t;
         if (lua_isthread(L, 2)) {          /* coro goes in watcher */
                 puts("Setting coro callback\n");
-                w->data = (void *)lua_topointer(L, 2);
+/*                 w->data = (void *)lua_topointer(L, 2); */
         } else if (lua_isfunction(L, 2)) { /* reg[udata] = fun */
                 puts("Setting fun callback\n");
-                lua_settable(L, LUA_REGISTRYINDEX);
         }
+        lua_pushlightuserdata(L, w);
+        lua_insert(L, 2);
+        lua_settable(L, LUA_REGISTRYINDEX);
         return 0;
 }
 
@@ -315,25 +308,27 @@ static int lev_set_cb(lua_State *L) {
 
 
 static int lev_timer_init(lua_State *L) {
-        ev_timer *t = (ev_timer *)malloc(sizeof(ev_timer *));
         double after = luaL_checknumber(L, 2);
         double repeat = luaL_optint(L, 3, 0);
-        lua_pop(L, 2);
-        ev_timer_init(t, (void *) call_luafun_cb, after, repeat);
-        t->data = NULL;
-        lua_pushlightuserdata(L, t);
+        lua_pop(L, 3);
+        Lev_watcher *watcher = (Lev_watcher *)lua_newuserdata(L, sizeof(Lev_watcher *));
+        luaL_getmetatable(L, "Lev_watcher");
+        lua_setmetatable(L, -2);
+        ev_timer *w = (ev_timer *)malloc(sizeof(ev_timer));
+        watcher->t = (ev_watcher *)w;
+        puts("TI");
+        ev_timer_init(w, (void *)call_luafun_cb, after, repeat);
+        w->data = NULL;
         return 1;
 }
 
 
 static int lev_timer_start(lua_State *L) {
-        struct ev_loop *loop = (void *)lua_topointer(L, 1);
-        ev_timer *tim = (void *)lua_topointer(L, 2);
-        if (loop == NULL || tim == NULL) {
-                lua_pushstring(L, "bad juju");
-                lua_error(L);
-        }
-        ev_timer_start(loop, tim);
+        Lev_loop *loop = check_ev_loop(L, 1);
+        Lev_watcher *watcher = check_ev_watcher(L, 2);
+
+        ev_timer *t = (ev_timer *) watcher->t; /* check watcher type */
+        ev_timer_start(loop->t, t);
         return 0;
 }
 
@@ -341,6 +336,22 @@ static int lev_timer_start(lua_State *L) {
 /**********/
 /* Module */
 /**********/
+
+static const struct luaL_Reg loop_mt [] = {
+        { "loop", lev_loop },
+        { "timer_init", lev_timer_init },
+        { "timer_start", lev_timer_start },
+        { NULL, NULL },
+};
+
+
+static const struct luaL_Reg watcher_mt [] = {
+        { "set_cb", lev_set_cb },
+/*         { "timer_init", lev_timer_init }, */
+/*         { "timer_start", lev_timer_start }, */
+        { NULL, NULL },
+};
+
 
 static const struct luaL_Reg evlib[] = {
         { "version_major", lev_version_major },
@@ -372,8 +383,8 @@ static const struct luaL_Reg evlib[] = {
         { "supported_backends", lev_supported_backends },
 /*         { "io_init", lev_io_init }, */
 /*         { "io_start", lev_io_start }, */
-        { "timer_init", lev_timer_init },
-        { "timer_start", lev_timer_start },
+/*         { "timer_init", lev_timer_init }, */
+/*         { "timer_start", lev_timer_start }, */
         { "set_cb", lev_set_cb },
         { NULL, NULL },
 };
@@ -388,9 +399,18 @@ static const struct luaL_Reg evlib[] = {
 
 
 int luaopen_evc(lua_State *L) {
-        luaL_register(L, "evc", evlib);
+        luaL_newmetatable(L, "Lev_loop");
+        lua_pushvalue(L, -1);
+        lua_setfield(L, -2, "__index");
+        luaL_register(L, NULL, loop_mt);
+
+        luaL_newmetatable(L, "Lev_watcher");
+        lua_pushvalue(L, -1);
+        lua_setfield(L, -2, "__index");
+        luaL_register(L, NULL, watcher_mt);
 
 /*         init_callbacks(L); */
 
+        luaL_register(L, "evc", evlib);
         return 1;
 }
