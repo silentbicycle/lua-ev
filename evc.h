@@ -16,6 +16,7 @@ static void call_luafun_cb(struct ev_loop *l, ev_watcher *w, int events);
 #define MTNAME(name) name##_mt
 #define TOS(n) #n
 #define PRE_LEV(name) Lev_##name
+#define PRE_EV(name) ev_##name
 #define TO_REG(name) TOS(Lev_##name)
 
 #define pushnum(fun)                                \
@@ -45,22 +46,62 @@ static void call_luafun_cb(struct ev_loop *l, ev_watcher *w, int events);
         return 1;                                   \
 }
 
-#define defmetatable(name)                          \
+#define DEFMETATABLE(name)                          \
         luaL_newmetatable(L, TO_REG(name));         \
-        lua_pushvalue(L, -1);                       \
+        lua_pushboolean(L, 1);                      \
+        lua_setfield(L, -2, "__watcher");           \
         lua_setfield(L, -2, "__index");             \
         luaL_register(L, NULL, MTNAME(name))
 
 
-#define defwatcher(type)                            \
+#define DEFWATCHER(type)                            \
         typedef struct PRE_LEV(type) {              \
         ev_##type *t;                               \
         } PRE_LEV(type)
 
+
 #define check_ev_loop(L, n) ((Lev_loop *)luaL_checkudata(L, n, "Lev_loop"))
 #define check_ev_watcher(L, n) ((Lev_watcher *)luaL_checkudata(L, n, "Lev_watcher"))
 #define check_ev_callback(L, n) ((Lev_callback *)luaL_checkudata(L, n, "Lev_callback"))
-#define check_ev_callback(L, n) ((Lev_callback *)luaL_checkudata(L, n, "Lev_callback"))
+
+#define CHECK_WATCHER(n, type)                      \
+        (Lev_##type *)luaL_checkudata(L, n, TO_REG(type))
+
+#define DEF_WATCHER_START_AND_STOP(type)            \
+        static int lev_##type##_start(lua_State *L){  \
+        Lev_loop *loop = check_ev_loop(L, 1);       \
+        PRE_LEV(type) *w = CHECK_WATCHER(2, type);  \
+        ev_##type##_start(loop->t, w->t);           \
+        return 0;                                   \
+        }                                           \
+        static int lev_##type##_stop(lua_State *L){ \
+        Lev_loop *loop = check_ev_loop(L, 1);       \
+        PRE_LEV(type) *w = CHECK_WATCHER(2, type);  \
+        ev_##type##_stop(loop->t, w->t);            \
+        return 0;                                   \
+        }
+
+/*  PRE_LEV(name) *name = (PRE_LEV(name) *) lua_newuserdata(L, sizeof(PRE_LEV(name)) *); \ */
+
+
+#define ALLOC_UDATA_AND_WATCHER(name)               \
+        PRE_LEV(name) *name = (PRE_LEV(name) *)lua_newuserdata(L, sizeof(PRE_LEV(name)*)); \
+        luaL_getmetatable(L, TO_REG(name));         \
+        lua_setmetatable(L, -2);                    \
+        PRE_EV(name) *t = (PRE_EV(name) *)malloc(sizeof(PRE_EV(name))); \
+        name->t = (PRE_EV(name) *) t;
+
+#define DEF_WATCHER_MT_VALS(name)                   \
+        static const struct luaL_Reg name##_mt [] = { \
+        { "start", lev_##name##_start },            \
+        { "stop", lev_##name##_stop },              \
+        { "set_cb", lev_set_cb },                   \
+        { "is_active", lev_is_active },             \
+        { "is_pending", lev_is_pending },           \
+        { "set_priority", lev_set_priority },       \
+        { "priority", lev_priority },               \
+        { NULL, NULL },                             \
+};
 
 
 /***********/
@@ -73,18 +114,18 @@ typedef struct Lev_loop {
         struct ev_loop *t;
 } Lev_loop;
 
-defwatcher(watcher);            /* generic */
-defwatcher(io);
-defwatcher(timer);
-defwatcher(periodic);
-defwatcher(signal);
-defwatcher(child);
-defwatcher(stat);
-defwatcher(idle);
-defwatcher(prepare);
-defwatcher(check);
-defwatcher(embed);
-defwatcher(fork);
-defwatcher(async);
+DEFWATCHER(watcher);            /* generic */
+DEFWATCHER(io);
+DEFWATCHER(timer);
+DEFWATCHER(periodic);
+DEFWATCHER(signal);
+DEFWATCHER(child);
+DEFWATCHER(stat);
+DEFWATCHER(idle);
+DEFWATCHER(prepare);
+DEFWATCHER(check);
+DEFWATCHER(embed);
+DEFWATCHER(fork);
+DEFWATCHER(async);
 
 #endif

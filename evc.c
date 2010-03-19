@@ -9,6 +9,11 @@
 /* TODO EV_MULTIPLICITY ? */
 
 
+static void do_error(lua_State *L, const char *e) {
+        lua_pushstring(L, e); lua_error(L);
+}
+
+
 /*****************************/
 /* General library functions */
 /*****************************/
@@ -144,32 +149,52 @@ loop_fun_0(ev_loop_verify)
 watcher_bool(ev_is_active)
 watcher_bool(ev_is_pending)
 
+static const char *bad_watcher = "First argument is not a valid watcher";
+
+
+/* Check for any kind of watcher. */
+static Lev_watcher* check_watcher(lua_State *L, int n) {
+        void *udata = lua_touserdata(L, n);
+        if (udata == NULL) return NULL;
+        /* local mt = getmetatable(watcher); mt.__watcher == true */
+        lua_getmetatable(L, 1);
+        if (lua_isnil(L, -1)) return NULL;
+        lua_getfield(L, -1, "__watcher");
+        lua_pushboolean(L, 1);
+        if (!lua_equal(L, -1, -2)) return NULL;
+        lua_pop(L, 3);
+        return (Lev_watcher*) udata;
+}
+
 
 /* Set a callback: [ ev_watcher *w, luafun or coro ] */
 static int lev_set_cb(lua_State *L) {
-        /* settable: t k v -> t[k] = v */
-        Lev_watcher *watcher = check_ev_watcher(L, 1);
-        ev_watcher *w = watcher->t;
-        if (lua_isthread(L, 2)) {          /* coro goes in watcher */
-                puts("Setting coro callback\n");
-        } else if (lua_isfunction(L, 2)) { /* reg[udata] = fun */
-                puts("Setting fun callback\n");
+        Lev_watcher *watcher = check_watcher(L, 1);
+        if (watcher == NULL) do_error(L, bad_watcher);
+        int cbtype = lua_type(L, -1);
+        if (cbtype == LUA_TFUNCTION || cbtype == LUA_TTHREAD) {
+                ev_watcher *w = watcher->t;
+                lua_pushlightuserdata(L, w);
+                lua_insert(L, 2);
+                lua_settable(L, LUA_REGISTRYINDEX);
+        } else {
+                printf("%d\n", cbtype);
+                do_error(L, "Second argument must be function or coroutine.");
         }
-        lua_pushlightuserdata(L, w);
-        lua_insert(L, 2);
-        lua_settable(L, LUA_REGISTRYINDEX);
         return 0;
 }
 
 static int lev_set_priority(lua_State *L) {
-        Lev_watcher *w = check_ev_watcher(L, 1);
+        Lev_watcher *w = check_watcher(L, 1);
+        if (w == NULL) do_error(L, bad_watcher);
         int prio = luaL_checknumber(L, 2);
         ev_set_priority((w->t), prio);
         return 0;
 }
 
 static int lev_priority(lua_State *L) {
-        Lev_watcher *w = check_ev_watcher(L, 1);
+        Lev_watcher *w = check_watcher(L, 1);
+        if (w == NULL) do_error(L, bad_watcher);
         lua_pushnumber(L, ev_priority(w->t));
         return 1;
 }
@@ -179,50 +204,40 @@ static int lev_priority(lua_State *L) {
 /* Watcher functions */
 /*********************/
 
-/* static int lev_io_init(lua_State *L) { */
-/*         Lev_watcher *lw = (Lev_watcher *)lua_newuserdata(L, sizeof(Lev_watcher)); */
-/*         ev_io *w = (ev_io *)lw->t; */
-/*         Lev_callback *cb = check_ev_callback(L, 1); */
-/*         int fdes = luaL_checknumber(L, 2); */
-/*         int event_mask = luaL_checknumber(L, 3); */
-/*         ev_io_init(w, (void *) cb->t, fdes, event_mask); */
-/*         return 1; */
-/* } */
-
-
-/* static int lev_io_start(lua_State *L) { */
-/*         Lev_loop *l = check_ev_loop(L, 1); */
-/*         Lev_watcher *w = check_ev_watcher(L, 2); */
-/*         ev_io_start(l->t, (ev_io *) w->t); */
-/*         return 0; */
-/* } */
-
-
-static int lev_timer_init(lua_State *L) {
-        double after = luaL_checknumber(L, 2);
-        double repeat = luaL_optint(L, 3, 0);
-        lua_pop(L, 3);
-        Lev_watcher *watcher = (Lev_watcher *)lua_newuserdata(L, sizeof(Lev_watcher *));
-        luaL_getmetatable(L, "Lev_watcher");
-        lua_setmetatable(L, -2);
-        ev_timer *w = (ev_timer *)malloc(sizeof(ev_timer));
-        watcher->t = (ev_watcher *)w;
-        ev_timer_init(w, (void *)call_luafun_cb, after, repeat);
-        w->data = NULL;
+static int lev_io_init(lua_State *L) {
+        int fd = luaL_checkinteger(L, 1);
+        int flags = luaL_checkinteger(L, 2); /* R, W, R|W */
+        lua_pop(L, 2);
+        ALLOC_UDATA_AND_WATCHER(io);
+        ev_io_init(io->t, (void *)call_luafun_cb, fd, flags);
         return 1;
 }
 
 
-static int lev_timer_start(lua_State *L) {
-        Lev_loop *loop = check_ev_loop(L, 1);
-        Lev_watcher *watcher = check_ev_watcher(L, 2);
-
-        ev_timer *t = (ev_timer *) watcher->t; /* check watcher type */
-        ev_timer_start(loop->t, t);
-        return 0;
+static int lev_timer_init(lua_State *L) {
+        double after = luaL_checknumber(L, 1);
+        double repeat = luaL_optint(L, 2, 0);
+        lua_pop(L, 2);
+        ALLOC_UDATA_AND_WATCHER(timer);
+        ev_timer_init(timer->t, (void *)call_luafun_cb, after, repeat);
+        return 1;
 }
 
 
+DEF_WATCHER_START_AND_STOP(io);
+DEF_WATCHER_START_AND_STOP(timer);
+DEF_WATCHER_START_AND_STOP(periodic);
+DEF_WATCHER_START_AND_STOP(signal);
+DEF_WATCHER_START_AND_STOP(child);
+DEF_WATCHER_START_AND_STOP(stat);
+DEF_WATCHER_START_AND_STOP(idle);
+DEF_WATCHER_START_AND_STOP(prepare);
+DEF_WATCHER_START_AND_STOP(check);
+DEF_WATCHER_START_AND_STOP(embed);
+DEF_WATCHER_START_AND_STOP(fork);
+DEF_WATCHER_START_AND_STOP(async);
+
+ 
 /*************/
 /* Callbacks */
 /*************/
@@ -244,8 +259,7 @@ static void call_luafun_cb(struct ev_loop *l, ev_watcher *w, int events) {
                 lua_pushinteger(L, events);
                 lua_pcall(L, 2, 0, 0);
         } else {
-                lua_pushstring(L, "Not a coroutine or function");
-                lua_error(L);
+                do_error(L, "Not a coroutine or function");
         }
 }
 
@@ -266,6 +280,8 @@ static const struct luaL_Reg evlib[] = {
         { "ev_loop_new", lev_loop_new },
         { "ev_loop_count", lev_loop_count },
         { "set_cb", lev_set_cb },
+        { "timer_init", lev_timer_init },
+        { "io_init", lev_io_init },
         { NULL, NULL },
 };
 
@@ -294,27 +310,42 @@ static const struct luaL_Reg loop_mt [] = {
         { "is_default_loop", lev_is_default_loop },
         { "set_io_collect_interval", lev_set_io_collect_interval },
         { "set_timeout_collect_interval", lev_set_timeout_collect_interval },
-        { "timer_init", lev_timer_init },
         { "timer_start", lev_timer_start },
+        { "io_start", lev_io_start },
         { NULL, NULL },
 };
 
-
-static const struct luaL_Reg watcher_mt [] = {
-        { "set_cb", lev_set_cb },
-        { "is_active", lev_is_active },
-        { "is_pending", lev_is_pending },
-        { "set_priority", lev_set_priority },
-        { "priority", lev_priority },
-/*         { "timer_init", lev_timer_init }, */
-/*         { "timer_start", lev_timer_start }, */
-        { NULL, NULL },
-};
+/* Set up a table with functions for each watcher. */
+DEF_WATCHER_MT_VALS(io);
+DEF_WATCHER_MT_VALS(timer);
+DEF_WATCHER_MT_VALS(periodic);
+DEF_WATCHER_MT_VALS(signal);
+DEF_WATCHER_MT_VALS(child);
+DEF_WATCHER_MT_VALS(stat);
+DEF_WATCHER_MT_VALS(idle);
+DEF_WATCHER_MT_VALS(prepare);
+DEF_WATCHER_MT_VALS(check);
+DEF_WATCHER_MT_VALS(embed);
+DEF_WATCHER_MT_VALS(fork);
+DEF_WATCHER_MT_VALS(async);
 
 
 int luaopen_evc(lua_State *L) {
-        defmetatable(loop);
-        defmetatable(watcher);
+        DEFMETATABLE(loop);
+
+        /* Define each watcher metatable and put them in the registry */
+        DEFMETATABLE(io);
+        DEFMETATABLE(timer);
+        DEFMETATABLE(periodic);
+        DEFMETATABLE(signal);
+        DEFMETATABLE(child);
+        DEFMETATABLE(stat);
+        DEFMETATABLE(idle);
+        DEFMETATABLE(prepare);
+        DEFMETATABLE(check);
+        DEFMETATABLE(embed);
+        DEFMETATABLE(fork);
+        DEFMETATABLE(async);
 
         luaL_register(L, "evc", evlib);
         return 1;
