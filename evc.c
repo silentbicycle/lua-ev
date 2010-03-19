@@ -272,6 +272,7 @@ static const struct luaL_Reg evlib[] = {
 
 static const struct luaL_Reg loop_mt [] = {
         { "loop", lev_loop },
+        { "unloop", lev_unloop },
         { "set_userdata", lev_set_userdata },
         { "userdata", lev_userdata },
         { "resume", lev_resume },
@@ -283,7 +284,6 @@ static const struct luaL_Reg loop_mt [] = {
         { "count", lev_loop_count },
         { "unref", lev_unref },
         { "ref", lev_ref },
-        { "unloop", lev_unloop },
         { "now", lev_now },
         { "now_update", lev_now_update },
         { "backend", lev_backend },
