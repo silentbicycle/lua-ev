@@ -2,14 +2,23 @@ require "evc"
 
 -- my.dump(evc)
 
-print("Supported: ", evc.supported_backends())
-print("Recommended: ", evc.recommended_backends())
+print("Supported: ")
+for k,v in pairs(evc.supported_backends()) do print("", k,v) end
+print("Recommended: ")
+for k,v in pairs(evc.recommended_backends()) do print("", k,v) end
+print("Embeddable: ")
+for k,v in pairs(evc.embeddable_backends()) do print("", k,v) end
 
 local loop = evc.default_loop()
 print("loop: ", loop)
 
 local tim = evc.timer_init(2)
 print("timer: ", tim)
+
+local emb_loop = evc.loop_new("kqueue")
+print("emb_loop", emb_loop)
+local emb = evc.embed_init(emb_loop)
+print("emb", emb)
 
 local tim_mt = getmetatable(tim)
 -- TODO fix this
@@ -40,7 +49,9 @@ local tim2 = evc.timer_init(1, 1)
 local coro = coroutine.create(function (w, ev)
                     local ct = 0
                     while true do
-                       print("In coro, ct=", ct, w, ev)
+                       print("In coro, ct=", ct, w)
+                       printf("Flags: ")
+                       for k,v in pairs(ev) do print(k,v) end
                        ct = ct + 1
                        coroutine.yield()
                     end

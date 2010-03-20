@@ -33,14 +33,14 @@ end
 
 function gen_c(prefix, hs, mul, bytes)
    printf("\tint hash = %d*tag[%d] + tag[%d];",
-          mul, bytes[1], bytes[2])
+          mul, bytes[1] - 1, bytes[2] - 1)
    printf('\tif (DEBUG) printf("tag: %%s, hash: %%d\\n", tag, hash);');
    printf("\tswitch (hash) {")
    for hash,tag in pairs(hs) do
-      printf("\t\tcase %d: f |= %s%s; break;",
+      printf("\t\tcase %d: return %s%s; break;",
              hash, prefix, tag:upper())
    end
-   printf('\t\tdefault: printf("match failed: %%d (%%s)", hash, tag);')
+   printf('\t\tdefault: printf("match failed: %%d (%%s)", hash, tag); return -1;')
    printf("\t}")
 end
 

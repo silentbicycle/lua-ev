@@ -83,14 +83,11 @@ static int flags_to_table(lua_State *L, int flags) {
         int i;
         lua_newtable(L);
 
-#define setbitfield(name) \
-        lua_pushboolean(L, 1); lua_setfield(L, -2, name);
-
         for (i=1; i < EV_ERROR; i <<= 1) {
                 switch (flags & i) {
-                case EV_READ: setbitfield("read"); break;
+                case EV_READ: setbitfield("read"); setbitfield("io"); break;
                 case EV_WRITE: setbitfield("write"); break;
-                case EV_TIMER: setbitfield("timer"); break;
+                case EV_TIMEOUT: setbitfield("timer"); break;
                 case EV_PERIODIC: setbitfield("periodic"); break;
                 case EV_SIGNAL: setbitfield("signal"); break;
                 case EV_CHILD: setbitfield("child"); break;
@@ -103,7 +100,7 @@ static int flags_to_table(lua_State *L, int flags) {
                 case EV_ASYNC: setbitfield("async"); break;
                 case EV_CUSTOM: setbitfield("custom"); break;
                 case EV_ERROR: setbitfield("error"); break;
-                default: ;
+                default: ; /* there are gaps */
                 }
         }
         return 1;
@@ -111,14 +108,13 @@ static int flags_to_table(lua_State *L, int flags) {
 
 static int setflag(int f, const char *tag) {
 #include "flaghash.h"
-        return f;
 }
 
 /* table -> int w/ bitflags */
 static int table_to_flags(lua_State *L, int idx) {
         const char* flagname;
         if (!lua_istable(L, idx)) {
-                lua_pushfstring(L, "Table expected at argument #%d\n", idx);
+                lua_pushfstring(L, "Table or expected at argument #%d\n", idx);
                 lua_error(L);
         }
         int flags = 0;
@@ -131,7 +127,7 @@ static int table_to_flags(lua_State *L, int idx) {
         return flags;
 }
 
-static int backend_to_name(lua_State *L, int be) {
+static const char* backend_to_name(int be) {
         const char* name;
         switch (be) {
         case EVFLAG_AUTO: name = "auto"; break;
@@ -143,15 +139,29 @@ static int backend_to_name(lua_State *L, int be) {
         case EVBACKEND_PORT: name = "port"; break;
         default: name = "unmatched";
         }
-        lua_pushstring(L, name);
+        return name;
+}
+
+static int backends_to_table(lua_State *L, int bes) {
+        int i;
+        lua_newtable(L);
+
+        for (i=1; i <= EVBACKEND_PORT; i <<= 1) {
+                switch (bes & i) {
+                case EVBACKEND_SELECT: setbitfield("select"); break;
+                case EVBACKEND_POLL: setbitfield("poll"); break;
+                case EVBACKEND_EPOLL: setbitfield("epoll"); break;
+                case EVBACKEND_KQUEUE: setbitfield("kqueue"); break;
+                case EVBACKEND_DEVPOLL: setbitfield("devpoll"); break;
+                case EVBACKEND_PORT: setbitfield("port"); break;
+                default: ;
+                }
+        }
         return 1;
 }
 
-static int name_to_backend(lua_State *L, const char* tag) {
-        int f;
+static int name_to_backend(const char* tag) {
 #include "backendhash.h"        
-        lua_pushinteger(L, f);
-        return 1;
 }
 
 
@@ -161,9 +171,9 @@ static int name_to_backend(lua_State *L, const char* tag) {
 
 pushnum(ev_version_major)
 pushnum(ev_version_minor)
-pushnum(ev_supported_backends)
-pushnum(ev_recommended_backends)
-pushnum(ev_embeddable_backends)
+push_backend_table(ev_supported_backends)
+push_backend_table(ev_recommended_backends)
+push_backend_table(ev_embeddable_backends)
 pushnum(ev_time)
 
 
@@ -186,7 +196,8 @@ static int loop_tostring(lua_State *L) {
         Lev_loop *loop = check_ev_loop(L, 1);
         struct ev_loop *t = loop->t;
         
-        lua_pushfstring(L, "evloop: 0x%d", (long) t);
+        lua_pushfstring(L, "ev_loop(%s): %p",
+            backend_to_name(ev_backend(loop->t)), t);
         return 1;
 }
 
@@ -205,9 +216,26 @@ static void register_loop_io_buffer(lua_State *L, struct ev_loop *loop) {
         lua_settable(L, LUA_REGISTRYINDEX);
 }
 
+static int get_flag_of_int_or_str(lua_State *L) {
+        if (lua_gettop(L) == 0)
+                return 0;
+        else if (lua_isnumber(L, 1))
+                return luaL_checkinteger(L, 1);
+        else if (lua_isstring(L, 1)) {
+                const char *name = lua_tostring(L, 1);
+                int n = name_to_backend(name);
+                if (n == -1) {
+                        lua_pushfstring(L, "Unknown backend: %s", name);
+                        lua_error(L);
+                }
+                return n;
+        } else
+                do_error(L, "Loop arg must be int(flag) or string.");
+        return 0;
+}
 
 static int lev_default_loop(lua_State *L) {
-        int flags = luaL_optint(L, 1, 0);
+        int flags = get_flag_of_int_or_str(L);
         Lev_loop *lev_loop = (Lev_loop *)lua_newuserdata(L, sizeof(Lev_loop));
         struct ev_loop *loop = ev_default_loop(flags);
         register_loop_io_buffer(L, loop);
@@ -215,7 +243,7 @@ static int lev_default_loop(lua_State *L) {
 }
 
 static int lev_loop_new(lua_State *L) {
-        int flags = luaL_optint(L, 1, 0);
+        int flags = get_flag_of_int_or_str(L);
         Lev_loop *lev_loop = (Lev_loop *)lua_newuserdata(L, sizeof(Lev_loop));
         struct ev_loop *loop = ev_loop_new(flags);
         register_loop_io_buffer(L, loop);
@@ -359,9 +387,20 @@ static int lev_priority(lua_State *L) {
 /* Specific watcher functions */
 /******************************/
 
+static int flags_of_int_or_table(lua_State *L, int idx) {
+        if (lua_isnumber(L, idx)) {
+                return luaL_checkinteger(L, idx);
+        } else if (lua_istable(L, idx)) {
+                return table_to_flags(L, idx);
+        } else {
+                do_error(L, "Flag int or table expected");
+                return -1;
+        }
+}
+
 static int lev_io_init(lua_State *L) {
         int fd = luaL_checkinteger(L, 1);
-        int flags = luaL_checkinteger(L, 2); /* R, W, R|W */
+        int flags = flags_of_int_or_table(L, 2);
         lua_pop(L, 2);
         ALLOC_UDATA_AND_WATCHER(io);
         ev_io_init(io->t, (void *)call_luafun_cb, fd, flags);
@@ -501,16 +540,17 @@ static void call_luafun_cb(struct ev_loop *l, ev_watcher *w, int events) {
         lua_State *L = ev_userdata(l);
         lua_pushlightuserdata(L, w);
         lua_gettable(L, LUA_REGISTRYINDEX);
+        if (DEBUG) printf("Events mask: %d\n", events);
         if (lua_isthread(L, -1)) {
                 if (DEBUG) puts("About to resume coroutine\n");
                 lua_State *Coro = (void *)lua_topointer(L, -1);
                 lua_pushlightuserdata(Coro, w);
-                lua_pushinteger(Coro, events);
+                flags_to_table(Coro, events);
                 lua_resume(Coro, 2);
         } else if (lua_isfunction(L, -1)) {
                 if (DEBUG) puts("About to call Lua callback fun\n");
                 lua_pushlightuserdata(L, w);
-                lua_pushinteger(L, events);
+                flags_to_table(L, events);
                 lua_pcall(L, 2, 0, 0);
         } else {
                 do_error(L, "Not a coroutine or function");
@@ -531,8 +571,8 @@ static const struct luaL_Reg evlib[] = {
         { "recommended_backends", lev_recommended_backends },
         { "embeddable_backends", lev_embeddable_backends },
         { "default_loop", lev_default_loop },
-        { "ev_loop_new", lev_loop_new },
-        { "ev_loop_count", lev_loop_count },
+        { "loop_new", lev_loop_new },
+        { "loop_count", lev_loop_count },
         { "set_cb", lev_set_cb },
         { "timer_init", lev_timer_init },
         { "io_init", lev_io_init },
@@ -546,16 +586,8 @@ static const struct luaL_Reg evlib[] = {
         { "embed_init", lev_embed_init },
         { "fork_init", lev_fork_init },
         { "async_init", lev_async_init },
-/*         { "flags_to_table", flags_to_table }, */
-/*         { "table_to_flags", table_to_flags }, */
         { NULL, NULL },
 };
-
-/* Where should these go? */
-/* { "embed_sweep", lev_embed_sweep }, */
-/* { "async_send", lev_async_send }, */
-/* { "async_pending", lev_async_pending }, */
-
 
 static const struct luaL_Reg loop_mt [] = {
         { "loop", lev_loop },
@@ -624,6 +656,21 @@ int luaopen_evc(lua_State *L) {
         DEF_WATCHER_METATABLE(embed);
         DEF_WATCHER_METATABLE(fork);
         DEF_WATCHER_METATABLE(async);
+
+        /* additional watcher methods */
+        
+
+/* Where should these go? */
+/* { "embed_sweep", lev_embed_sweep }, */
+/* { "async_send", lev_async_send }, */
+/* { "async_pending", lev_async_pending }, */
+
+        /* set embed_mt.sweep = lev_embed_sweep */
+        lua_pushstring(L, "Lev_embed");
+        lua_gettable(L, LUA_REGISTRYINDEX);
+        lua_pushcfunction(L, lev_embed_sweep);
+        lua_setfield(L, -2, "sweep");
+        lua_pop(L, 1);
 
         luaL_register(L, "evc", evlib);
         return 1;

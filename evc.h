@@ -28,6 +28,12 @@ static void call_luafun_cb(struct ev_loop *l, ev_watcher *w, int events);
         return 1;                                   \
 }
 
+#define push_backend_table(fun)                     \
+        static int PRE_L(fun)(lua_State *L) {       \
+        backends_to_table(L, fun());                \
+        return 1;                                   \
+}
+
 #define loop_fun_0(fun)                             \
         static int PRE_L(fun)(lua_State *L) {       \
         Lev_loop *loop = check_ev_loop(L, 1);       \
@@ -98,7 +104,7 @@ static void call_luafun_cb(struct ev_loop *l, ev_watcher *w, int events);
         }                                           \
         static int type##_tostring(lua_State *L) {  \
         PRE_LEV(type) *w = CHECK_WATCHER(1, type);  \
-        lua_pushfstring(L, "%s_watcher: 0x%d", #type, (long) w); \
+        lua_pushfstring(L, "%s_watcher: %p", #type, w); \
         return 1;                                   \
         }
 
@@ -125,7 +131,9 @@ static void call_luafun_cb(struct ev_loop *l, ev_watcher *w, int events);
 };
 
 
-#define LEV_HASH(tag)    37*tag[0] + tag[1]
+#define setbitfield(name) \
+        lua_pushboolean(L, 1); lua_setfield(L, -2, name);
+
 
 /***********/
 /* Structs */
