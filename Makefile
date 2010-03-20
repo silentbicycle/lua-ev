@@ -14,5 +14,7 @@ test: ${LIBNAME}${LIBEXT}
 install: ${LIBNAME}${LIBEXT}
 	cp ${INST_LIB} ${LUA_DEST_LIB}
 
+${LIBNAME}.c: ${LIBNAME}.h
+
 ${LIBNAME}${LIBEXT}: ${LIBNAME}.c
 	${CC} -o $@ $> ${CFLAGS} ${LUA_FLAGS} ${INC} ${LIB_PATHS} ${LIBS}

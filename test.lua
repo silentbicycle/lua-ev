@@ -8,7 +8,7 @@ print("Recommended: ", evc.recommended_backends())
 local loop = evc.default_loop()
 print("loop: ", loop)
 
-local tim = evc.timer_init(2, 3)
+local tim = evc.timer_init(2)
 print("timer: ", tim)
 
 local tim_mt = getmetatable(tim)
@@ -29,19 +29,35 @@ print "set cb"
 loop:timer_start(tim)           --or tim:start(loop) ?
 print "timer started"
 
+local tim2 = evc.timer_init(1, 1)
+local coro = coroutine.create(function (w, ev)
+                    local ct = 0
+                    while true do
+                       print("In coro, ct=", ct, w, ev)
+                       ct = ct + 1
+                       coroutine.yield()
+                    end
+                 end)
+
+tim2:set_cb(coro)
+loop:timer_start(tim2)
+
 print "about to init io watcher"
-local steve = evc.io_init(0, 1) --stdin, read
-assert(steve)
-local steve_mt = getmetatable(steve)
-steve_mt.__watcher = true
+local iow = evc.io_init(0, 1) --stdin, read
+assert(iow)
+local iow_mt = getmetatable(iow)
+iow_mt.__watcher = true
 
 print "setting io cb"
-steve:set_cb(function (w, ev)
+iow:set_cb(function (w, ev)
                 print("STDIN is Readable")
+                local data, err = loop:read(0)
+                print(data, err)
+                iow:stop(loop)
              end)
 print "set io cb"
 
-loop:io_start(steve)
+loop:io_start(iow)
 
 print "about to loop"
 loop:loop()

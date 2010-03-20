@@ -1,6 +1,9 @@
 #ifndef LEVC_H
 #define LEVC_H
 
+#define DEBUG 0
+#define BUFSZ 1024
+
 /**************/
 /* Prototypes */
 /**************/
@@ -48,10 +51,19 @@ static void call_luafun_cb(struct ev_loop *l, ev_watcher *w, int events);
 
 #define DEFMETATABLE(name)                          \
         luaL_newmetatable(L, TO_REG(name));         \
-        lua_pushboolean(L, 1);                      \
-        lua_setfield(L, -2, "__watcher");           \
+        lua_pushvalue(L, -1);                       \
         lua_setfield(L, -2, "__index");             \
         luaL_register(L, NULL, MTNAME(name))
+
+
+#define DEF_WATCHER_METATABLE(name)                 \
+        luaL_newmetatable(L, TO_REG(name));         \
+        lua_pushboolean(L, 1);                      \
+        lua_setfield(L, -2, "__watcher");           \
+        lua_pushvalue(L, -1);                       \
+        lua_setfield(L, -1, "__index");             \
+        luaL_register(L, NULL, MTNAME(name));     
+
 
 
 #define DEFWATCHER(type)                            \
@@ -75,8 +87,8 @@ static void call_luafun_cb(struct ev_loop *l, ev_watcher *w, int events);
         return 0;                                   \
         }                                           \
         static int lev_##type##_stop(lua_State *L){ \
-        Lev_loop *loop = check_ev_loop(L, 1);       \
-        PRE_LEV(type) *w = CHECK_WATCHER(2, type);  \
+        Lev_loop *loop = check_ev_loop(L, 2);       \
+        PRE_LEV(type) *w = CHECK_WATCHER(1, type);  \
         ev_##type##_stop(loop->t, w->t);            \
         return 0;                                   \
         }

@@ -1,5 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
+#include <errno.h>
 #include <lua.h>
 #include <lauxlib.h>
 #include <ev.h>
@@ -9,8 +11,66 @@
 /* TODO EV_MULTIPLICITY ? */
 
 
+/*********************/
+/* Utility functions */
+/*********************/
+
 static void do_error(lua_State *L, const char *e) {
         lua_pushstring(L, e); lua_error(L);
+}
+
+
+/* Do an async, unbuffered read.
+ * The loop is just an arbitrary place to keep a buf...maybe use *L as an idx instead! */
+static int async_read(lua_State *L) {
+        check_ev_loop(L, 1);
+        int fd = luaL_checkinteger(L, 2);
+        lua_insert(L, 1);
+        lua_gettable(L, LUA_REGISTRYINDEX);
+        char *buf = (char *) lua_topointer(L, 3);
+        if (buf == NULL) {
+                lua_pushboolean(L, 0);
+                printf("errno is %d\n", errno);
+                lua_pushstring(L, "bad");
+                return 2;
+        }
+        
+        int ct = read(fd, buf, BUFSZ);
+        if (ct == -1) {
+                lua_pushboolean(L, 0);
+                if (errno == EAGAIN) {
+                        errno = 0;
+                        lua_pushstring(L, "timeout");
+                } else {
+                        lua_pushstring(L, "error");
+                }
+                return 2;
+        } else {
+                lua_pushlstring(L, buf, ct);
+                return 1;
+        }
+}
+
+
+static int async_write(lua_State *L) {
+        size_t len, written;
+        int fd = luaL_checkinteger(L, 1);
+        const char *buf = lua_tolstring(L, 2, &len);
+        if (buf == NULL) do_error(L, "second argument must be string");
+        written = write(fd, buf, len);
+        if (written == -1) {
+                lua_pushboolean(L, 0);
+                if (errno == EAGAIN) {
+                        errno = 0;
+                        lua_pushstring(L, "timeout");
+                } else {
+                        lua_pushstring(L, "error");
+                }
+                return 2;
+        } else {
+                lua_pushnumber(L, written);
+                return 1;
+        }
 }
 
 
@@ -49,10 +109,19 @@ static int init_loop_mt(lua_State *L, Lev_loop *lev_loop, struct ev_loop *loop) 
         return 1;               /* leaving the loop */
 }
 
+static void register_loop_io_buffer(lua_State *L, struct ev_loop *loop) {
+        char *buf = (char *)calloc(BUFSZ, sizeof(char *));
+        lua_pushlightuserdata(L, loop);
+        lua_pushlightuserdata(L, buf);
+        lua_settable(L, LUA_REGISTRYINDEX);
+}
+
+
 static int lev_default_loop(lua_State *L) {
         int flags = luaL_optint(L, 1, 0);
         Lev_loop *lev_loop = (Lev_loop *)lua_newuserdata(L, sizeof(Lev_loop));
         struct ev_loop *loop = ev_default_loop(flags);
+        register_loop_io_buffer(L, loop);
         return init_loop_mt(L, lev_loop, loop);
 }
 
@@ -60,6 +129,7 @@ static int lev_loop_new(lua_State *L) {
         int flags = luaL_optint(L, 1, 0);
         Lev_loop *lev_loop = (Lev_loop *)lua_newuserdata(L, sizeof(Lev_loop));
         struct ev_loop *loop = ev_loop_new(flags);
+        register_loop_io_buffer(L, loop);
         return init_loop_mt(L, lev_loop, loop);
 }
 
@@ -178,7 +248,6 @@ static int lev_set_cb(lua_State *L) {
                 lua_insert(L, 2);
                 lua_settable(L, LUA_REGISTRYINDEX);
         } else {
-                printf("%d\n", cbtype);
                 do_error(L, "Second argument must be function or coroutine.");
         }
         return 0;
@@ -247,14 +316,13 @@ static void call_luafun_cb(struct ev_loop *l, ev_watcher *w, int events) {
         lua_pushlightuserdata(L, w);
         lua_gettable(L, LUA_REGISTRYINDEX);
         if (lua_isthread(L, -1)) {
-                puts("About to resume coroutine\n");
+                if (DEBUG) puts("About to resume coroutine\n");
                 lua_State *Coro = (void *)lua_topointer(L, -1);
-                if (Coro == NULL) printf("CRAP\n");
                 lua_pushlightuserdata(Coro, w);
                 lua_pushinteger(Coro, events);
                 lua_resume(Coro, 2);
         } else if (lua_isfunction(L, -1)) {
-                puts("About to call Lua callback fun\n");
+                if (DEBUG) puts("About to call Lua callback fun\n");
                 lua_pushlightuserdata(L, w);
                 lua_pushinteger(L, events);
                 lua_pcall(L, 2, 0, 0);
@@ -312,6 +380,8 @@ static const struct luaL_Reg loop_mt [] = {
         { "set_timeout_collect_interval", lev_set_timeout_collect_interval },
         { "timer_start", lev_timer_start },
         { "io_start", lev_io_start },
+        { "read", async_read },
+        { "write", async_write },
         { NULL, NULL },
 };
 
@@ -334,18 +404,18 @@ int luaopen_evc(lua_State *L) {
         DEFMETATABLE(loop);
 
         /* Define each watcher metatable and put them in the registry */
-        DEFMETATABLE(io);
-        DEFMETATABLE(timer);
-        DEFMETATABLE(periodic);
-        DEFMETATABLE(signal);
-        DEFMETATABLE(child);
-        DEFMETATABLE(stat);
-        DEFMETATABLE(idle);
-        DEFMETATABLE(prepare);
-        DEFMETATABLE(check);
-        DEFMETATABLE(embed);
-        DEFMETATABLE(fork);
-        DEFMETATABLE(async);
+        DEF_WATCHER_METATABLE(io);
+        DEF_WATCHER_METATABLE(timer);
+        DEF_WATCHER_METATABLE(periodic);
+        DEF_WATCHER_METATABLE(signal);
+        DEF_WATCHER_METATABLE(child);
+        DEF_WATCHER_METATABLE(stat);
+        DEF_WATCHER_METATABLE(idle);
+        DEF_WATCHER_METATABLE(prepare);
+        DEF_WATCHER_METATABLE(check);
+        DEF_WATCHER_METATABLE(embed);
+        DEF_WATCHER_METATABLE(fork);
+        DEF_WATCHER_METATABLE(async);
 
         luaL_register(L, "evc", evlib);
         return 1;
