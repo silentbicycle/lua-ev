@@ -8,8 +8,11 @@
 
 #include "evc.h"
 
-/* TODO EV_MULTIPLICITY ? */
-
+/* TODO:
+ * _ all watcher inits (esp. embed) and test
+ * _ EV_MULTIPLICITY ?
+ * _ flags (both as ints and tables)
+ */
 
 /*********************/
 /* Utility functions */
@@ -220,21 +223,19 @@ static int lev_userdata(lua_State *L) {
 loop_fun_0(ev_loop_verify)
 
 
-/*********************/
-/* Watcher functions */
-/*********************/
+/*****************************/
+/* Generic watcher functions */
+/*****************************/
 
 watcher_bool(ev_is_active)
 watcher_bool(ev_is_pending)
 
 static const char *bad_watcher = "First argument is not a valid watcher";
 
-
 /* Check for any kind of watcher. */
 static Lev_watcher* check_watcher(lua_State *L, int n) {
         void *udata = lua_touserdata(L, n);
         if (udata == NULL) return NULL;
-        /* local mt = getmetatable(watcher); mt.__watcher == true */
         lua_getmetatable(L, 1);
         if (lua_isnil(L, -1)) return NULL;
         lua_getfield(L, -1, "__watcher");
@@ -243,7 +244,6 @@ static Lev_watcher* check_watcher(lua_State *L, int n) {
         lua_pop(L, 3);
         return (Lev_watcher*) udata;
 }
-
 
 /* Set a callback: [ ev_watcher *w, luafun or coro ] */
 static int lev_set_cb(lua_State *L) {
@@ -277,9 +277,9 @@ static int lev_priority(lua_State *L) {
 }
 
 
-/*********************/
-/* Watcher functions */
-/*********************/
+/******************************/
+/* Specific watcher functions */
+/******************************/
 
 static int lev_io_init(lua_State *L) {
         int fd = luaL_checkinteger(L, 1);
@@ -296,6 +296,108 @@ static int lev_timer_init(lua_State *L) {
         lua_pop(L, 2);
         ALLOC_UDATA_AND_WATCHER(timer);
         ev_timer_init(timer->t, (void *)call_luafun_cb, after, repeat);
+        return 1;
+}
+
+static int lev_periodic_init(lua_State *L) {
+        double offset = luaL_checknumber(L, 1);
+        double interval = luaL_optnumber(L, 2, 0);
+        /* ev_tstamp (*cb)(ev_periodic *, ev_tstamp): NYI */
+        lua_pop(L, 2);
+        ALLOC_UDATA_AND_WATCHER(periodic);
+        ev_periodic_init(periodic->t, (void *)call_luafun_cb,
+            offset, interval, 0);
+        return 1;
+}
+
+static int lev_signal_init(lua_State *L) {
+        int signum = luaL_checkinteger(L, 1);
+        lua_pop(L, 1);
+        ALLOC_UDATA_AND_WATCHER(signal);
+        ev_signal_init(signal->t, (void *)call_luafun_cb, signum);
+        return 1;
+}
+
+static int lev_child_init(lua_State *L) {
+        int pid = luaL_checkinteger(L, 1);
+        int trace = 0;
+        if (lua_isboolean(L, 2)) {
+                trace = lua_toboolean(L, 2);
+                lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+        ALLOC_UDATA_AND_WATCHER(child);
+        ev_child_init(child->t, (void *)call_luafun_cb, pid, trace);
+        return 1;
+}
+
+static int lev_stat_init(lua_State *L) {
+        const char* path = luaL_checkstring(L, 1);
+        double interval = 0;
+        if (lua_isnumber(L, 2)) {
+                interval = lua_tonumber(L, 2);
+                lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+        ALLOC_UDATA_AND_WATCHER(stat);
+        ev_stat_init(stat->t, (void *)call_luafun_cb, path, interval);
+        return 1;
+}
+
+static int lev_idle_init(lua_State *L) {
+        ALLOC_UDATA_AND_WATCHER(idle);
+        ev_idle_init(idle->t, (void *)call_luafun_cb);
+        return 1;
+}
+
+static int lev_prepare_init(lua_State *L) {
+        ALLOC_UDATA_AND_WATCHER(prepare);
+        ev_prepare_init(prepare->t, (void *)call_luafun_cb);
+        return 1;
+}
+
+static int lev_check_init(lua_State *L) {
+        ALLOC_UDATA_AND_WATCHER(check);
+        ev_check_init(check->t, (void *)call_luafun_cb);
+        return 1;
+}
+
+static int lev_embed_init(lua_State *L) {
+        Lev_loop *subloop = check_ev_loop(L, 1);
+        ALLOC_UDATA_AND_WATCHER(embed);
+        ev_embed_init(embed->t, (void *)call_luafun_cb, subloop->t);
+        return 1;
+}
+
+static int lev_embed_sweep(lua_State *L) {
+        Lev_loop *loop = check_ev_loop(L, 1);
+        Lev_embed *w = CHECK_WATCHER(2, embed);
+        ev_embed_sweep(loop->t, w->t);
+        return 0;
+}
+
+static int lev_fork_init(lua_State *L) {
+        ALLOC_UDATA_AND_WATCHER(fork);
+        ev_fork_init(fork->t, (void *)call_luafun_cb);
+        return 1;
+}
+
+static int lev_async_init(lua_State *L) {
+        ALLOC_UDATA_AND_WATCHER(async);
+        ev_async_init(async->t, (void *)call_luafun_cb);
+        return 1;
+}
+
+static int lev_async_send(lua_State *L) {
+        Lev_loop *loop = check_ev_loop(L, 1);
+        Lev_async *w = CHECK_WATCHER(2, async);
+        ev_async_send(loop->t, w->t);
+        return 0;
+}
+
+static int lev_async_pending(lua_State *L) {
+        Lev_async *w = CHECK_WATCHER(1, async);
+        lua_pushboolean(L, ev_async_pending(w->t));
         return 1;
 }
 
@@ -356,8 +458,23 @@ static const struct luaL_Reg evlib[] = {
         { "set_cb", lev_set_cb },
         { "timer_init", lev_timer_init },
         { "io_init", lev_io_init },
+        { "periodic_init", lev_periodic_init },
+        { "signal_init", lev_signal_init },
+        { "child_init", lev_child_init },
+        { "stat_init", lev_stat_init },
+        { "idle_init", lev_idle_init },
+        { "prepare_init", lev_prepare_init },
+        { "check_init", lev_check_init },
+        { "embed_init", lev_embed_init },
+        { "fork_init", lev_fork_init },
+        { "async_init", lev_async_init },
         { NULL, NULL },
 };
+
+/* Where should these go? */
+/* { "embed_sweep", lev_embed_sweep }, */
+/* { "async_send", lev_async_send }, */
+/* { "async_pending", lev_async_pending }, */
 
 
 static const struct luaL_Reg loop_mt [] = {
