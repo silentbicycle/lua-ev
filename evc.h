@@ -125,6 +125,8 @@ static void call_luafun_cb(struct ev_loop *l, ev_watcher *w, int events);
 };
 
 
+#define LEV_HASH(tag)    37*tag[0] + tag[1]
+
 /***********/
 /* Structs */
 /***********/

@@ -31,3 +31,10 @@ TESTSUITE=	test.lua
 LIBNAME=	evc
 LIBPREFIX=	
 INST_LIB=	${LIBNAME}${LIBEXT}
+
+
+# Tags
+EV_FLAGS =	read write timer periodic signal \
+		child stat idle prepare check embed \
+		fork async custom error
+EV_BACKENDS =   select poll epoll kqueue devpoll port

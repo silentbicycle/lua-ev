@@ -8,10 +8,11 @@
 
 #include "evc.h"
 
+
 /* TODO:
- * _ all watcher inits (esp. embed) and test
+ * _ test all watcher inits
+ * x flags (both as ints and tables)
  * _ EV_MULTIPLICITY ?
- * _ flags (both as ints and tables)
  */
 
 /*********************/
@@ -54,7 +55,7 @@ static int async_read(lua_State *L) {
         }
 }
 
-
+/* Do an async, unbuffered write. */
 static int async_write(lua_State *L) {
         size_t len, written;
         int fd = luaL_checkinteger(L, 1);
@@ -74,6 +75,83 @@ static int async_write(lua_State *L) {
                 lua_pushnumber(L, written);
                 return 1;
         }
+}
+
+
+/* int w/ bitflags -> table */
+static int flags_to_table(lua_State *L, int flags) {
+        int i;
+        lua_newtable(L);
+
+#define setbitfield(name) \
+        lua_pushboolean(L, 1); lua_setfield(L, -2, name);
+
+        for (i=1; i < EV_ERROR; i <<= 1) {
+                switch (flags & i) {
+                case EV_READ: setbitfield("read"); break;
+                case EV_WRITE: setbitfield("write"); break;
+                case EV_TIMER: setbitfield("timer"); break;
+                case EV_PERIODIC: setbitfield("periodic"); break;
+                case EV_SIGNAL: setbitfield("signal"); break;
+                case EV_CHILD: setbitfield("child"); break;
+                case EV_STAT: setbitfield("stat"); break;
+                case EV_IDLE: setbitfield("idle"); break;
+                case EV_PREPARE: setbitfield("prepare"); break;
+                case EV_CHECK: setbitfield("check"); break;
+                case EV_EMBED: setbitfield("embed"); break;
+                case EV_FORK: setbitfield("fork"); break;
+                case EV_ASYNC: setbitfield("async"); break;
+                case EV_CUSTOM: setbitfield("custom"); break;
+                case EV_ERROR: setbitfield("error"); break;
+                default: ;
+                }
+        }
+        return 1;
+}
+
+static int setflag(int f, const char *tag) {
+#include "flaghash.h"
+        return f;
+}
+
+/* table -> int w/ bitflags */
+static int table_to_flags(lua_State *L, int idx) {
+        const char* flagname;
+        if (!lua_istable(L, idx)) {
+                lua_pushfstring(L, "Table expected at argument #%d\n", idx);
+                lua_error(L);
+        }
+        int flags = 0;
+        lua_pushnil(L);
+        while (lua_next(L, idx)) { /* stack: [-2=k, -1=v] */
+                lua_pop(L, 1);     /* we don't need the val */
+                flagname = luaL_checkstring(L, -1);
+                flags = setflag(flags, flagname);
+        }
+        return flags;
+}
+
+static int backend_to_name(lua_State *L, int be) {
+        const char* name;
+        switch (be) {
+        case EVFLAG_AUTO: name = "auto"; break;
+        case EVBACKEND_SELECT: name = "select"; break;
+        case EVBACKEND_POLL: name = "poll"; break;
+        case EVBACKEND_EPOLL: name = "epoll"; break;
+        case EVBACKEND_KQUEUE: name = "kqueue"; break;
+        case EVBACKEND_DEVPOLL: name = "devpoll"; break;
+        case EVBACKEND_PORT: name = "port"; break;
+        default: name = "unmatched";
+        }
+        lua_pushstring(L, name);
+        return 1;
+}
+
+static int name_to_backend(lua_State *L, const char* tag) {
+        int f;
+#include "backendhash.h"        
+        lua_pushinteger(L, f);
+        return 1;
 }
 
 
@@ -468,6 +546,8 @@ static const struct luaL_Reg evlib[] = {
         { "embed_init", lev_embed_init },
         { "fork_init", lev_fork_init },
         { "async_init", lev_async_init },
+/*         { "flags_to_table", flags_to_table }, */
+/*         { "table_to_flags", table_to_flags }, */
         { NULL, NULL },
 };
 

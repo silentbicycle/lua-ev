@@ -1,9 +1,9 @@
 include config.mk
 
-all:	${LIBNAME}${LIBEXT}
+all:	flaghash.h backendhash.h ${LIBNAME}${LIBEXT}
 
 clean:
-	@rm -f ${LIBNAME}${LIBEXT}
+	@rm -f ${LIBNAME}${LIBEXT} {flag,backend}hash.h
 
 gdb:
 	gdb `which lua` lua.core
@@ -14,7 +14,15 @@ test: ${LIBNAME}${LIBEXT}
 install: ${LIBNAME}${LIBEXT}
 	cp ${INST_LIB} ${LUA_DEST_LIB}
 
-${LIBNAME}.c: ${LIBNAME}.h
+flaghash.h: gen_perfhash.lua
+	${LUA} gen_perfhash.lua "EV_" ${EV_FLAGS} > $@
+
+backendhash.h: gen_perfhash.lua
+	${LUA} gen_perfhash.lua "EVBACKEND_" ${EV_BACKENDS} > $@
+
+
+${LIBNAME}.c: ${LIBNAME}.h flaghash.h backendhash.h
 
 ${LIBNAME}${LIBEXT}: ${LIBNAME}.c
-	${CC} -o $@ $> ${CFLAGS} ${LUA_FLAGS} ${INC} ${LIB_PATHS} ${LIBS}
+	${CC} -o $@ $> ${CFLAGS} ${LUA_FLAGS} ${INC} \
+		${LIB_PATHS} ${LIBS}

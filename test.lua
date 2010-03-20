@@ -15,6 +15,13 @@ local tim_mt = getmetatable(tim)
 -- TODO fix this
 tim_mt.__watcher = true
 
+-- for _,flags in ipairs{ 1, 3, 128, 256, 4096, 65536 } do
+--    print(" -- flags -> table ", flags)
+--    for k,v in pairs(evc.flags_to_table(flags)) do
+--       print(k, v)
+--    end   
+-- end
+
 local ct = 3
 
 print(loop, tim)
