@@ -101,6 +101,14 @@ static int lev_sleep(lua_State *L) {
 /* Loops */
 /*********/
 
+static int loop_tostring(lua_State *L) {
+        Lev_loop *loop = check_ev_loop(L, 1);
+        struct ev_loop *t = loop->t;
+        
+        lua_pushfstring(L, "evloop: 0x%d", (long) t);
+        return 1;
+}
+
 static int init_loop_mt(lua_State *L, Lev_loop *lev_loop, struct ev_loop *loop) {
         lev_loop->t = loop;
         ev_set_userdata(loop, L);  /* so event loop knows the Lua state for callbacks*/
@@ -282,7 +290,6 @@ static int lev_io_init(lua_State *L) {
         return 1;
 }
 
-
 static int lev_timer_init(lua_State *L) {
         double after = luaL_checknumber(L, 1);
         double repeat = luaL_optint(L, 2, 0);
@@ -292,19 +299,18 @@ static int lev_timer_init(lua_State *L) {
         return 1;
 }
 
-
-DEF_WATCHER_START_AND_STOP(io);
-DEF_WATCHER_START_AND_STOP(timer);
-DEF_WATCHER_START_AND_STOP(periodic);
-DEF_WATCHER_START_AND_STOP(signal);
-DEF_WATCHER_START_AND_STOP(child);
-DEF_WATCHER_START_AND_STOP(stat);
-DEF_WATCHER_START_AND_STOP(idle);
-DEF_WATCHER_START_AND_STOP(prepare);
-DEF_WATCHER_START_AND_STOP(check);
-DEF_WATCHER_START_AND_STOP(embed);
-DEF_WATCHER_START_AND_STOP(fork);
-DEF_WATCHER_START_AND_STOP(async);
+DEF_WATCHER_METHODS(io);
+DEF_WATCHER_METHODS(timer);
+DEF_WATCHER_METHODS(periodic);
+DEF_WATCHER_METHODS(signal);
+DEF_WATCHER_METHODS(child);
+DEF_WATCHER_METHODS(stat);
+DEF_WATCHER_METHODS(idle);
+DEF_WATCHER_METHODS(prepare);
+DEF_WATCHER_METHODS(check);
+DEF_WATCHER_METHODS(embed);
+DEF_WATCHER_METHODS(fork);
+DEF_WATCHER_METHODS(async);
 
  
 /*************/
@@ -401,7 +407,12 @@ DEF_WATCHER_MT_VALS(async);
 
 
 int luaopen_evc(lua_State *L) {
-        DEFMETATABLE(loop);
+        luaL_newmetatable(L, "Lev_loop");
+        lua_pushvalue(L, -1);
+        lua_setfield(L, -2, "__index");
+        lua_pushcfunction(L, loop_tostring);
+        lua_setfield(L, -2, "__tostring");
+        luaL_register(L, NULL, loop_mt);
 
         /* Define each watcher metatable and put them in the registry */
         DEF_WATCHER_METATABLE(io);
