@@ -119,6 +119,11 @@ static void call_luafun_cb(struct ev_loop *l, ev_watcher *w, int events);
         PRE_EV(name) *t = (PRE_EV(name) *)malloc(sizeof(PRE_EV(name))); \
         name->t = (PRE_EV(name) *) t;
 
+#define REGISTER_WATCHER(name)                  \
+        lua_pushlightuserdata(L, name->t);      \
+        lua_pushvalue(L, -2);                   \
+        lua_settable(L, LUA_REGISTRYINDEX)
+
 #define DEF_WATCHER_MT_VALS(name)                   \
         static const struct luaL_Reg name##_mt [] = { \
         { "start", lev_##name##_start },            \

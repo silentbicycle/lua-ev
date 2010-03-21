@@ -10,7 +10,7 @@ for k,v in pairs(evc.embeddable_backends()) do print("", k,v) end
 local loop = evc.default_loop()
 print("loop: ", loop)
 
-local tim = evc.timer_init(2)
+local tim = evc.timer_init(2, 0.5)
 print("timer: ", tim)
 
 local emb_loop = evc.loop_new("kqueue")
@@ -18,24 +18,15 @@ print("emb_loop", emb_loop)
 local emb = evc.embed_init(emb_loop)
 print("emb", emb)
 
--- TODO fix this
-
--- for _,flags in ipairs{ 1, 3, 128, 256, 4096, 65536 } do
---    print(" -- flags -> table ", flags)
---    for k,v in pairs(evc.flags_to_table(flags)) do
---       print(k, v)
---    end   
--- end
-
 local ct = 3
 
 print(loop, tim)
 tim:set_cb(function (w, ev)
-              print("YAY", w, ev)
-              print(evc.time())
+              print("FUN", w, evc.time())
               ct = ct - 1
-              if ct == 0 then tim:stop() end
+              if ct == 0 then w:stop() end
               for k,v in pairs(ev) do print("--> ", k,v ) end
+              print ""
            end)
 print "set cb"
 
@@ -46,9 +37,9 @@ local tim2 = evc.timer_init(1, 1)
 local coro = coroutine.create(function (w, ev)
                     local ct = 0
                     while true do
-                       print("In coro, ct=", ct, w)
-                       printf("Flags: ")
-                       for k,v in pairs(ev) do print(k,v) end
+                       print("CORO, ct=", ct, w, "flags:")
+                       for k,v in pairs(ev) do print("--> ", k,v) end
+                       print ""
                        ct = ct + 1
                        coroutine.yield()
                     end

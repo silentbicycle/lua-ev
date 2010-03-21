@@ -24,7 +24,7 @@ static void pr_stack(lua_State *L) {
         printf("Stack height is %d\n", ct);
         int i;
         for (i=1; i <= ct; i++)
-                printf("%d: %d %s %xl\n",
+                printf("%d: %d %s %lx\n",
                     i, lua_type(L, i),
                     lua_tostring(L, i), (long)lua_topointer(L, i));
 }
@@ -366,14 +366,9 @@ static Lev_watcher* check_watcher(lua_State *L, int n) {
 static int lev_set_cb(lua_State *L) {
         Lev_watcher *watcher = check_watcher(L, 1);
         if (watcher == NULL) do_error(L, bad_watcher);
-        int cbtype = lua_type(L, -1);
+        int cbtype = lua_type(L, 2);
         if (cbtype == LUA_TFUNCTION || cbtype == LUA_TTHREAD) {
-                ev_watcher *w = watcher->t;
-                if (DEBUG) printf("cbtype = %d, fun=%xl, w=%xl\n",
-                    cbtype, (long)lua_topointer(L, -1), (long)w);
-                lua_pushlightuserdata(L, w);
-                lua_insert(L, -2);
-                lua_settable(L, LUA_REGISTRYINDEX);
+                lua_settable(L, LUA_REGISTRYINDEX); /* reg[Lev_w] -> cb */
         } else {
                 do_error(L, "Second argument must be function or coroutine.");
         }
@@ -417,6 +412,7 @@ static int lev_io_init(lua_State *L) {
         lua_pop(L, 2);
         ALLOC_UDATA_AND_WATCHER(io);
         ev_io_init(io->t, (void *)call_luafun_cb, fd, flags);
+        REGISTER_WATCHER(io);
         return 1;
 }
 
@@ -430,17 +426,18 @@ static int lev_io_set(lua_State *L) {
 
 static int lev_timer_init(lua_State *L) {
         double after = luaL_checknumber(L, 1);
-        double repeat = luaL_optint(L, 2, 0);
+        double repeat = luaL_optnumber(L, 2, 0);
         lua_pop(L, 2);
         ALLOC_UDATA_AND_WATCHER(timer);
         ev_timer_init(timer->t, (void *)call_luafun_cb, after, repeat);
+        REGISTER_WATCHER(timer);
         return 1;
 }
 
 static int lev_timer_set(lua_State *L) {
         Lev_timer *w = CHECK_WATCHER(1, timer);
         double after = luaL_checknumber(L, 2);
-        double repeat = luaL_optint(L, 3, 0);
+        double repeat = luaL_optnumber(L, 3, 0);
         ev_timer_set(w->t, after, repeat);
         return 0;
 }
@@ -453,6 +450,7 @@ static int lev_periodic_init(lua_State *L) {
         ALLOC_UDATA_AND_WATCHER(periodic);
         ev_periodic_init(periodic->t, (void *)call_luafun_cb,
             offset, interval, 0);
+        REGISTER_WATCHER(periodic);
         return 1;
 }
 
@@ -469,6 +467,7 @@ static int lev_signal_init(lua_State *L) {
         lua_pop(L, 1);
         ALLOC_UDATA_AND_WATCHER(signal);
         ev_signal_init(signal->t, (void *)call_luafun_cb, signum);
+        REGISTER_WATCHER(signal);
         return 1;
 }
 
@@ -489,6 +488,7 @@ static int lev_child_init(lua_State *L) {
         lua_pop(L, 1);
         ALLOC_UDATA_AND_WATCHER(child);
         ev_child_init(child->t, (void *)call_luafun_cb, pid, trace);
+        REGISTER_WATCHER(child);
         return 1;
 }
 
@@ -514,6 +514,7 @@ static int lev_stat_init(lua_State *L) {
         lua_pop(L, 1);
         ALLOC_UDATA_AND_WATCHER(stat);
         ev_stat_init(stat->t, (void *)call_luafun_cb, path, interval);
+        REGISTER_WATCHER(stat);
         return 1;
 }
 
@@ -532,18 +533,21 @@ static int lev_stat_set(lua_State *L) {
 static int lev_idle_init(lua_State *L) {
         ALLOC_UDATA_AND_WATCHER(idle);
         ev_idle_init(idle->t, (void *)call_luafun_cb);
+        REGISTER_WATCHER(idle);
         return 1;
 }
 
 static int lev_prepare_init(lua_State *L) {
         ALLOC_UDATA_AND_WATCHER(prepare);
         ev_prepare_init(prepare->t, (void *)call_luafun_cb);
+        REGISTER_WATCHER(prepare);
         return 1;
 }
 
 static int lev_check_init(lua_State *L) {
         ALLOC_UDATA_AND_WATCHER(check);
         ev_check_init(check->t, (void *)call_luafun_cb);
+        REGISTER_WATCHER(check);
         return 1;
 }
 
@@ -552,6 +556,7 @@ static int lev_embed_init(lua_State *L) {
         ALLOC_UDATA_AND_WATCHER(embed);
         /* A NULL callback does the right thing for most cases. TODO. */
         ev_embed_init(embed->t, /*(void *)call_luafun_cb*/ 0, subloop->t);
+        REGISTER_WATCHER(embed);
         return 1;
 }
 
@@ -572,12 +577,14 @@ static int lev_embed_sweep(lua_State *L) {
 static int lev_fork_init(lua_State *L) {
         ALLOC_UDATA_AND_WATCHER(fork);
         ev_fork_init(fork->t, (void *)call_luafun_cb);
+        REGISTER_WATCHER(fork);
         return 1;
 }
 
 static int lev_async_init(lua_State *L) {
         ALLOC_UDATA_AND_WATCHER(async);
         ev_async_init(async->t, (void *)call_luafun_cb);
+        REGISTER_WATCHER(async);
         return 1;
 }
 
@@ -615,34 +622,41 @@ DEF_WATCHER_METHODS(async);
 static void call_luafun_cb(struct ev_loop *l, ev_watcher *w, int events) {
         lua_State *L = ev_userdata(l);
         if (L == NULL) {printf("null L\n"); return; }
+        lua_pop(L, lua_gettop(L));
+        lua_pushlightuserdata(L, w);        /* [ev_w] */
+        lua_gettable(L, LUA_REGISTRYINDEX); /* [Lev_w] */
+        lua_pushvalue(L, -1);               /* [Lev_w Lev_w] */
+        lua_gettable(L, LUA_REGISTRYINDEX); /* [Lev_w, callback] */
+        lua_insert(L, -2);                  /* [callback, Lev_w] */
+        if (DEBUG) printf("top=%d, events=%d, cbtype=%d, "
+                          "fun/coro=0x%lx, Lev_w(%d)=0x%lx\n",
+            lua_gettop(L), events, lua_type(L, -2),
+            (long)lua_topointer(L, -2),
+            lua_type(L, -1), (long)lua_topointer(L, -1));
         if (DEBUG) pr_stack(L);
-/*         printf("one, %d %d\n", events, lua_gettop(L)); */
-        lua_pushlightuserdata(L, w);
-        lua_gettable(L, LUA_REGISTRYINDEX);
-        if (DEBUG) printf("Events mask: %d\n", events);
-        if (DEBUG) printf("cbtype = %d, fun/coro=%xl, w=%xl\n",
-            lua_type(L, -1), (long)lua_topointer(L, -1), (long)w);
 
-        if (lua_isthread(L, -1)) {
-                if (DEBUG) puts("About to resume coroutine\n");
-                lua_State *Coro = (void *)lua_topointer(L, -1);
-/*                 printf("two\n"); */
-                lua_pushlightuserdata(Coro, w);
-                flags_to_table(Coro, events);
+        if (lua_isthread(L, -2)) {
+                lua_State *Coro = (void *)lua_topointer(L, -2);
+                lua_xmove(L, Coro, 1);      /* pass Lev_w to coro */
+                flags_to_table(Coro, events); /* [cb, Lev_w, event_t] */
+                if (DEBUG) {
+                        printf("About to resume coroutine: %d\n", lua_status(Coro));
+                        pr_stack(Coro);
+                }
                 lua_resume(Coro, 2);
+                if (DEBUG) { puts("after coro"); pr_stack(Coro); }
                 lua_pop(L, 1);
-        } else if (lua_isfunction(L, -1)) {
-                if (DEBUG) puts("About to call Lua callback fun\n");
-/*                 printf("three\n"); */
-                lua_pushlightuserdata(L, w);
-                flags_to_table(L, events);
+        } else if (lua_isfunction(L, -2)) {
+                flags_to_table(L, events);  /* [cb, Lev_w, event_t] */
+                if (DEBUG) { puts("About to call Lua callback fun"); pr_stack(L); }
                 lua_pcall(L, 2, 0, 0);
+                if (DEBUG) { puts("After callback fun"); pr_stack(L); }
 /*                 lua_pop(L, 1); */
         } else {
-/*                 if (DEBUG) printf("%d\n", lua_type(L, -1)); */
-/*                 do_error(L, "Not a coroutine or function"); */
-                lua_pop(L, 1);
+                /* No callback defined. Shouldn't get here, but not a problem. */
+                lua_pop(L, 2);
         }
+        if (DEBUG) { puts("after"); pr_stack(L); }
 }
 
 
