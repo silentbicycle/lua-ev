@@ -19,13 +19,29 @@
 /* Utility functions */
 /*********************/
 
+static const char* l_typename(int t) {
+        switch (t) {
+        case LUA_TNIL: return "nil";
+        case LUA_TBOOLEAN: return "boolean";
+        case LUA_TLIGHTUSERDATA: return "lightuserdata";
+        case LUA_TNUMBER: return "number";
+        case LUA_TSTRING: return "string";
+        case LUA_TTABLE: return "table";
+        case LUA_TFUNCTION: return "function";
+        case LUA_TUSERDATA: return "userdata";
+        case LUA_TTHREAD: return "thread";
+        default: return "matchfail";
+        }
+}
+
+
 static void pr_stack(lua_State *L) {
         int ct = lua_gettop(L);
         printf("Stack height is %d\n", ct);
         int i;
         for (i=1; i <= ct; i++)
-                printf("%d: %d %s %lx\n",
-                    i, lua_type(L, i),
+                printf("%d: %s\t%s %lx\n",
+                    i, l_typename(lua_type(L, i)),
                     lua_tostring(L, i), (long)lua_topointer(L, i));
 }
 
@@ -117,7 +133,7 @@ static int flags_to_table(lua_State *L, int flags) {
         return 1;
 }
 
-static int setflag(int f, const char *tag) {
+static int getflag(int f, const char *tag) {
 #include "flaghash.h"
 }
 
@@ -131,9 +147,9 @@ static int table_to_flags(lua_State *L, int idx) {
         int flags = 0;
         lua_pushnil(L);
         while (lua_next(L, idx)) { /* stack: [-2=k, -1=v] */
-                lua_pop(L, 1);     /* we don't need the val */
+                lua_pop(L, 1);    /* we don't need the val */
                 flagname = luaL_checkstring(L, -1);
-                flags = setflag(flags, flagname);
+                flags |= getflag(flags, flagname);
         }
         return flags;
 }
@@ -412,6 +428,7 @@ static int lev_io_init(lua_State *L) {
         lua_pop(L, 2);
         ALLOC_UDATA_AND_WATCHER(io);
         ev_io_init(io->t, (void *)call_luafun_cb, fd, flags);
+/*         printf(" -- Initiating IO w/ flags=%d for fd %d\n", flags, fd); */
         REGISTER_WATCHER(io);
         return 1;
 }
@@ -420,6 +437,7 @@ static int lev_io_set(lua_State *L) {
         Lev_io *w = CHECK_WATCHER(1, io);
         int fd = luaL_checkinteger(L, 2);
         int flags = flags_of_int_or_table(L, 3);
+/*         printf(" -- Setting IO flags to %d for fd %d\n", flags, fd); */
         ev_io_set(w->t, fd, flags);
         return 0;
 }
@@ -619,6 +637,7 @@ DEF_WATCHER_METHODS(async);
 /* Callbacks */
 /*************/
 
+/* TODO I REALLY need to do error checking! */
 static void call_luafun_cb(struct ev_loop *l, ev_watcher *w, int events) {
         lua_State *L = ev_userdata(l);
         if (L == NULL) {printf("null L\n"); return; }
@@ -650,7 +669,7 @@ static void call_luafun_cb(struct ev_loop *l, ev_watcher *w, int events) {
                 flags_to_table(L, events);  /* [cb, Lev_w, event_t] */
                 if (DEBUG) { puts("About to call Lua callback fun"); pr_stack(L); }
                 lua_pcall(L, 2, 0, 0);
-                if (DEBUG) { puts("After callback fun"); pr_stack(L); }
+                if (lua_gettop(L) > 1 || DEBUG) { puts("After callback fun"); pr_stack(L); }
 /*                 lua_pop(L, 1); */
         } else {
                 /* No callback defined. Shouldn't get here, but not a problem. */
