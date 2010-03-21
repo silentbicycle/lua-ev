@@ -5,6 +5,7 @@
 #include <lua.h>
 #include <lauxlib.h>
 #include <ev.h>
+#include <assert.h>
 
 #include "evc.h"
 
@@ -312,6 +313,12 @@ static int lev_loop(lua_State *L) {
         return 0;
 }
 
+static int lev_step(lua_State *L) { /* only do one event sweep */
+        Lev_loop *loop = check_ev_loop(L, 1);
+        ev_loop(loop->t, EVLOOP_NONBLOCK);
+        return 0;
+}
+
 static int lev_unloop(lua_State *L) {
         Lev_loop *loop = check_ev_loop(L, 1);
         int flags = luaL_checknumber(L, 2);
@@ -360,9 +367,6 @@ loop_fun_0(ev_loop_verify)
 /* Generic watcher functions */
 /*****************************/
 
-watcher_bool(ev_is_active)
-watcher_bool(ev_is_pending)
-
 static const char *bad_watcher = "First argument is not a valid watcher";
 
 /* Check for any kind of watcher. */
@@ -378,12 +382,16 @@ static Lev_watcher* check_watcher(lua_State *L, int n) {
         return (Lev_watcher*) udata;
 }
 
+watcher_bool(ev_is_active)
+watcher_bool(ev_is_pending)
+
 /* Set a callback: [ ev_watcher *w, luafun or coro ] */
 static int lev_set_cb(lua_State *L) {
         Lev_watcher *watcher = check_watcher(L, 1);
         if (watcher == NULL) do_error(L, bad_watcher);
         int cbtype = lua_type(L, 2);
-        if (cbtype == LUA_TFUNCTION || cbtype == LUA_TTHREAD) {
+        if (cbtype == LUA_TNIL || cbtype == LUA_TFUNCTION
+            || cbtype == LUA_TTHREAD) {
                 lua_settable(L, LUA_REGISTRYINDEX); /* reg[Lev_w] -> cb */
         } else {
                 do_error(L, "Second argument must be function or coroutine.");
@@ -404,6 +412,17 @@ static int lev_priority(lua_State *L) {
         if (w == NULL) do_error(L, bad_watcher);
         lua_pushnumber(L, ev_priority(w->t));
         return 1;
+}
+
+
+/* ev_invoke (loop, ev_TYPE *watcher, int revents) */
+/* int ev_clear_pending (loop, ev_TYPE *watcher) */
+/* ev_feed_event (loop, ev_TYPE *watcher, int revents) */
+static int lev_clear_pending(lua_State *L) {
+        Lev_watcher *w = check_watcher(L, 1);
+        Lev_loop *loop = check_ev_loop(L, 2);
+        ev_clear_pending(loop->t, w->t);
+        return 0;
 }
 
 
@@ -637,7 +656,7 @@ DEF_WATCHER_METHODS(async);
 /* Callbacks */
 /*************/
 
-/* TODO I REALLY need to do error checking! */
+/* TODO I REALLY need to do error checking! XXX FIXME */
 static void call_luafun_cb(struct ev_loop *l, ev_watcher *w, int events) {
         lua_State *L = ev_userdata(l);
         if (L == NULL) {printf("null L\n"); return; }
@@ -654,6 +673,9 @@ static void call_luafun_cb(struct ev_loop *l, ev_watcher *w, int events) {
             lua_type(L, -1), (long)lua_topointer(L, -1));
         if (DEBUG) pr_stack(L);
 
+        /* What we should do here is clear the callback to the
+         * relevant watcher if there's an error. */
+
         if (lua_isthread(L, -2)) {
                 lua_State *Coro = (void *)lua_topointer(L, -2);
                 lua_xmove(L, Coro, 1);      /* pass Lev_w to coro */
@@ -662,14 +684,32 @@ static void call_luafun_cb(struct ev_loop *l, ev_watcher *w, int events) {
                         printf("About to resume coroutine: %d\n", lua_status(Coro));
                         pr_stack(Coro);
                 }
-                lua_resume(Coro, 2);
-                if (DEBUG) { puts("after coro"); pr_stack(Coro); }
+                int res = lua_resume(Coro, 2);
+                if (res > LUA_YIELD || lua_gettop(L) > 1 || DEBUG) {
+                        puts("After coro"); pr_stack(Coro);
+                }
+                if (res > LUA_YIELD) {
+                        puts("*** coro crashed");
+                        lua_pushlightuserdata(L, w);
+                        lua_pushnil(L);
+                        lua_settable(L, LUA_REGISTRYINDEX);
+                }
                 lua_pop(L, 1);
         } else if (lua_isfunction(L, -2)) {
                 flags_to_table(L, events);  /* [cb, Lev_w, event_t] */
                 if (DEBUG) { puts("About to call Lua callback fun"); pr_stack(L); }
-                lua_pcall(L, 2, 0, 0);
-                if (lua_gettop(L) > 1 || DEBUG) { puts("After callback fun"); pr_stack(L); }
+                int res = lua_pcall(L, 2, 0, 0);
+                if (res || lua_gettop(L) > 1 || DEBUG) {
+                        puts("After callback fun"); pr_stack(L);
+                        assert(0);
+                }
+
+                if (res) {
+                        puts("*** fun crashed");
+                        lua_pushlightuserdata(L, w);
+                        lua_pushnil(L);
+                        lua_settable(L, LUA_REGISTRYINDEX);
+                }
 /*                 lua_pop(L, 1); */
         } else {
                 /* No callback defined. Shouldn't get here, but not a problem. */
@@ -712,6 +752,7 @@ static const struct luaL_Reg evlib[] = {
 
 static const struct luaL_Reg loop_mt [] = {
         { "loop", lev_loop },
+        { "step", lev_step },
         { "unloop", lev_unloop },
         { "set_userdata", lev_set_userdata },
         { "userdata", lev_userdata },

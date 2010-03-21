@@ -47,9 +47,9 @@ local function queue_send(iow, client, data)
    local q = out_queue[client] or {}
    table.insert(q, 1, data)
    out_queue[client] = q
---    iow:stop(subloop)
-   iow:set(client:getfd(), { write=true })
---    iow:start(subloop)
+   iow:stop(subloop)
+   iow:set(client:getfd(), { read=true, write=true })
+   iow:start(subloop)
    print("should now listen for write")
 end
 
@@ -93,6 +93,7 @@ local function listener(iow, c)
    return coroutine.create(
       function(w, ev)
          while true do
+            print("pending? ", w:is_pending(), w:is_active())
             my.dump(ev)
             if ev.write then
                printf("GOT WRITE FLAG")
@@ -115,7 +116,7 @@ local function listener(iow, c)
                else
                   -- got an empty read, argh
                   iow:clear_pending(subloop)
-                  iow:set(subloop, 3)
+                  iow:set(c:getfd(), 3)
                   iow:start(subloop)
                end
             end

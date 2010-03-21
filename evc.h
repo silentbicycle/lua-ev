@@ -50,7 +50,7 @@ static void call_luafun_cb(struct ev_loop *l, ev_watcher *w, int events);
 
 #define watcher_bool(fun)                           \
         static int PRE_L(fun)(lua_State *L) {       \
-        Lev_watcher *w = check_ev_watcher(L, 1);    \
+        Lev_watcher *w = check_watcher(L, 1);       \
         lua_pushboolean(L, fun(w->t));              \
         return 1;                                   \
 }
@@ -82,7 +82,6 @@ static void call_luafun_cb(struct ev_loop *l, ev_watcher *w, int events);
 
 
 #define check_ev_loop(L, n) ((Lev_loop *)luaL_checkudata(L, n, "Lev_loop"))
-#define check_ev_watcher(L, n) ((Lev_watcher *)luaL_checkudata(L, n, "Lev_watcher"))
 #define check_ev_callback(L, n) ((Lev_callback *)luaL_checkudata(L, n, "Lev_callback"))
 
 #define CHECK_WATCHER(n, type)                      \
@@ -131,6 +130,7 @@ static void call_luafun_cb(struct ev_loop *l, ev_watcher *w, int events);
         { "set_cb", lev_set_cb },                   \
         { "is_active", lev_is_active },             \
         { "is_pending", lev_is_pending },           \
+        { "clear_pending", lev_clear_pending },     \
         { "set_priority", lev_set_priority },       \
         { "priority", lev_priority },               \
         { NULL, NULL },                             \
