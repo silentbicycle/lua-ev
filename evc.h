@@ -91,8 +91,8 @@ static void call_luafun_cb(struct ev_loop *l, ev_watcher *w, int events);
 
 #define DEF_WATCHER_METHODS(type)                   \
         static int lev_##type##_start(lua_State *L){  \
-        Lev_loop *loop = check_ev_loop(L, 1);       \
-        PRE_LEV(type) *w = CHECK_WATCHER(2, type);  \
+        PRE_LEV(type) *w = CHECK_WATCHER(1, type);  \
+        Lev_loop *loop = check_ev_loop(L, 2);       \
         ev_##type##_start(loop->t, w->t);           \
         return 0;                                   \
         }                                           \

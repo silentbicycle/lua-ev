@@ -19,6 +19,17 @@
 /* Utility functions */
 /*********************/
 
+static void pr_stack(lua_State *L) {
+        int ct = lua_gettop(L);
+        printf("Stack height is %d\n", ct);
+        int i;
+        for (i=1; i <= ct; i++)
+                printf("%d: %d %s %xl\n",
+                    i, lua_type(L, i),
+                    lua_tostring(L, i), (long)lua_topointer(L, i));
+}
+
+
 static void do_error(lua_State *L, const char *e) {
         lua_pushstring(L, e); lua_error(L);
 }
@@ -358,8 +369,10 @@ static int lev_set_cb(lua_State *L) {
         int cbtype = lua_type(L, -1);
         if (cbtype == LUA_TFUNCTION || cbtype == LUA_TTHREAD) {
                 ev_watcher *w = watcher->t;
+                if (DEBUG) printf("cbtype = %d, fun=%xl, w=%xl\n",
+                    cbtype, (long)lua_topointer(L, -1), (long)w);
                 lua_pushlightuserdata(L, w);
-                lua_insert(L, 2);
+                lua_insert(L, -2);
                 lua_settable(L, LUA_REGISTRYINDEX);
         } else {
                 do_error(L, "Second argument must be function or coroutine.");
@@ -482,11 +495,15 @@ static int lev_check_init(lua_State *L) {
 static int lev_embed_init(lua_State *L) {
         Lev_loop *subloop = check_ev_loop(L, 1);
         ALLOC_UDATA_AND_WATCHER(embed);
-        ev_embed_init(embed->t, (void *)call_luafun_cb, subloop->t);
+        /* Actually, we usually want to use a different callback here,
+         * to call ev_embed_sweep(mainloop, subloop->t). */
+
+        ev_embed_init(embed->t, /*(void *)call_luafun_cb*/ 0, subloop->t);
         return 1;
 }
 
 static int lev_embed_sweep(lua_State *L) {
+/*         puts("sweeping"); */
         Lev_loop *loop = check_ev_loop(L, 1);
         Lev_embed *w = CHECK_WATCHER(2, embed);
         ev_embed_sweep(loop->t, w->t);
@@ -538,22 +555,34 @@ DEF_WATCHER_METHODS(async);
 
 static void call_luafun_cb(struct ev_loop *l, ev_watcher *w, int events) {
         lua_State *L = ev_userdata(l);
+        if (L == NULL) {printf("null L\n"); return; }
+        if (DEBUG) pr_stack(L);
+/*         printf("one, %d %d\n", events, lua_gettop(L)); */
         lua_pushlightuserdata(L, w);
         lua_gettable(L, LUA_REGISTRYINDEX);
         if (DEBUG) printf("Events mask: %d\n", events);
+        if (DEBUG) printf("cbtype = %d, fun/coro=%xl, w=%xl\n",
+            lua_type(L, -1), (long)lua_topointer(L, -1), (long)w);
+
         if (lua_isthread(L, -1)) {
                 if (DEBUG) puts("About to resume coroutine\n");
                 lua_State *Coro = (void *)lua_topointer(L, -1);
+/*                 printf("two\n"); */
                 lua_pushlightuserdata(Coro, w);
                 flags_to_table(Coro, events);
                 lua_resume(Coro, 2);
+                lua_pop(L, 1);
         } else if (lua_isfunction(L, -1)) {
                 if (DEBUG) puts("About to call Lua callback fun\n");
+/*                 printf("three\n"); */
                 lua_pushlightuserdata(L, w);
                 flags_to_table(L, events);
                 lua_pcall(L, 2, 0, 0);
+/*                 lua_pop(L, 1); */
         } else {
-                do_error(L, "Not a coroutine or function");
+/*                 if (DEBUG) printf("%d\n", lua_type(L, -1)); */
+/*                 do_error(L, "Not a coroutine or function"); */
+                lua_pop(L, 1);
         }
 }
 
@@ -658,18 +687,18 @@ int luaopen_evc(lua_State *L) {
         DEF_WATCHER_METATABLE(async);
 
         /* additional watcher methods */
-        
-
-/* Where should these go? */
-/* { "embed_sweep", lev_embed_sweep }, */
-/* { "async_send", lev_async_send }, */
-/* { "async_pending", lev_async_pending }, */
-
-        /* set embed_mt.sweep = lev_embed_sweep */
         lua_pushstring(L, "Lev_embed");
         lua_gettable(L, LUA_REGISTRYINDEX);
         lua_pushcfunction(L, lev_embed_sweep);
         lua_setfield(L, -2, "sweep");
+        lua_pop(L, 1);
+
+        lua_pushstring(L, "Lev_async");
+        lua_gettable(L, LUA_REGISTRYINDEX);
+        lua_pushcfunction(L, lev_async_send);
+        lua_setfield(L, -2, "send");
+        lua_pushcfunction(L, lev_async_pending);
+        lua_setfield(L, -2, "pending");
         lua_pop(L, 1);
 
         luaL_register(L, "evc", evlib);

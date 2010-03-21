@@ -1,7 +1,5 @@
 require "evc"
 
--- my.dump(evc)
-
 print("Supported: ")
 for k,v in pairs(evc.supported_backends()) do print("", k,v) end
 print("Recommended: ")
@@ -20,9 +18,7 @@ print("emb_loop", emb_loop)
 local emb = evc.embed_init(emb_loop)
 print("emb", emb)
 
-local tim_mt = getmetatable(tim)
 -- TODO fix this
-tim_mt.__watcher = true
 
 -- for _,flags in ipairs{ 1, 3, 128, 256, 4096, 65536 } do
 --    print(" -- flags -> table ", flags)
@@ -39,10 +35,11 @@ tim:set_cb(function (w, ev)
               print(evc.time())
               ct = ct - 1
               if ct == 0 then tim:stop() end
+              for k,v in pairs(ev) do print("--> ", k,v ) end
            end)
 print "set cb"
 
-loop:timer_start(tim)           --or tim:start(loop) ?
+tim:start(loop)
 print "timer started"
 
 local tim2 = evc.timer_init(1, 1)
@@ -58,13 +55,11 @@ local coro = coroutine.create(function (w, ev)
                  end)
 
 tim2:set_cb(coro)
-loop:timer_start(tim2)
+tim2:start(loop)
 
 print "about to init io watcher"
 local iow = evc.io_init(0, 1) --stdin, read
 assert(iow)
-local iow_mt = getmetatable(iow)
-iow_mt.__watcher = true
 
 print "setting io cb"
 iow:set_cb(function (w, ev)
@@ -75,7 +70,7 @@ iow:set_cb(function (w, ev)
              end)
 print "set io cb"
 
-loop:io_start(iow)
+iow:start(loop)
 
 print "about to loop"
 loop:loop()
