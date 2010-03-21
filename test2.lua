@@ -1,5 +1,6 @@
 require "evc"
 require "socket"
+require "tophat"
 
 local con_ct, msg_ct, secs = 0, 0, 0
 
@@ -7,22 +8,19 @@ local loop = evc.default_loop()
 local subloop = evc.loop_new("kqueue")
 local emb = evc.embed_init(subloop)
 emb:start(loop)
--- emb:set_cb(function()
---               emb:sweep(subloop)
---               emb:stop(loop)
---               emb:start(loop)
---            end)
 
 
 local function spawn_coro(iow, c)
---    print("spawn coro")
+   local outbuf = {}
    return coroutine.create(
       function(w, ev)
          while true do
+            if ev.write then end
+            if ev.read then end
+
             local ok, err, rest = c:receive()
             local msg = ok or rest
             if msg ~= "" then 
---                print("GOT: ", msg)
                c:send(msg)
                msg_ct = msg_ct + 1
             elseif err == "closed" then
@@ -42,14 +40,11 @@ local function add_client(c)
    local iow = evc.io_init(c:getfd(), 1)
    iow:set_cb(spawn_coro(iow, c))
    iow:start(subloop)
---    iow:start(loop)
 end
 
 
 local function acceptor(iow, sock)
---    print "acceptor"
    return function(w, ev)
---              print(w, ev, iow, sock)
              local client, err = sock:accept()
              while client do
                 add_client(client)

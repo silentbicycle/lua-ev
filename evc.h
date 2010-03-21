@@ -70,7 +70,8 @@ static void call_luafun_cb(struct ev_loop *l, ev_watcher *w, int events);
         lua_setfield(L, -2, "__tostring");          \
         lua_pushvalue(L, -1);                       \
         lua_setfield(L, -1, "__index");             \
-        luaL_register(L, NULL, MTNAME(name));     
+        luaL_register(L, NULL, MTNAME(name));       \
+        lua_pop(L, 1)
 
 
 
