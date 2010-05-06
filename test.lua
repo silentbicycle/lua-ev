@@ -1,12 +1,5 @@
 require "evc"
 
-print("Supported: ")
-for k,v in pairs(evc.supported_backends()) do print("", k,v) end
-print("Recommended: ")
-for k,v in pairs(evc.recommended_backends()) do print("", k,v) end
-print("Embeddable: ")
-for k,v in pairs(evc.embeddable_backends()) do print("", k,v) end
-
 local loop = evc.default_loop()
 print("loop: ", loop)
 
@@ -24,7 +17,12 @@ print(loop, tim)
 tim:set_cb(function (w, ev)
               print("FUN", w, evc.time())
               ct = ct - 1
-              if ct == 0 then w:stop() end
+              if ct == 2 then
+                 print "Throwing error"
+                 error("wocka wocka wocka")
+                 print("resuming?")
+                 tim:stop(loop)
+              end
               for k,v in pairs(ev) do print("--> ", k,v ) end
               print ""
            end)
@@ -40,13 +38,17 @@ local coro = coroutine.create(function (w, ev)
                        print("CORO, ct=", ct, w, "flags:")
                        for k,v in pairs(ev) do print("--> ", k,v) end
                        print ""
+                       if ct == 3 then
+                          print("********** About to crash **********")
+                          error("crasharooney")
+                       end
                        ct = ct + 1
                        coroutine.yield()
                     end
                  end)
 
-tim2:set_cb(coro)
-tim2:start(loop)
+-- tim2:set_cb(coro)
+-- tim2:start(loop)
 
 print "about to init io watcher"
 local iow = evc.io_init(0, 1) --stdin, read

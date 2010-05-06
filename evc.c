@@ -35,22 +35,20 @@ static const char* l_typename(int t) {
         }
 }
 
-
 static void pr_stack(lua_State *L) {
         int ct = lua_gettop(L);
-        printf("Stack height is %d\n", ct);
+        printf("----------\nStack height is %d\n", ct);
         int i;
         for (i=1; i <= ct; i++)
-                printf("%d: %s\t%s %lx\n",
+                printf("    %d: %s\t%s %lx\n",
                     i, l_typename(lua_type(L, i)),
                     lua_tostring(L, i), (long)lua_topointer(L, i));
+        puts("----------");
 }
-
 
 static void do_error(lua_State *L, const char *e) {
         lua_pushstring(L, e); lua_error(L);
 }
-
 
 /* Do an async, unbuffered read.
  * The loop is just an arbitrary place to keep a buf...maybe use *L as an idx instead! */
@@ -104,7 +102,6 @@ static int async_write(lua_State *L) {
                 return 1;
         }
 }
-
 
 /* int w/ bitflags -> table */
 static int flags_to_table(lua_State *L, int flags) {
@@ -430,12 +427,27 @@ static int lev_clear_pending(lua_State *L) {
 /* Specific watcher functions */
 /******************************/
 
-static int flags_of_int_or_table(lua_State *L, int idx) {
-        if (lua_isnumber(L, idx)) {
+static int str_to_flags(lua_State *L, int idx) {
+        int i, flags=0;
+        const char *spec = lua_tostring(L, idx);
+        for (i=0; i < 2; i++) {
+                if (spec[i] == '\0') return flags;
+                else if (spec[i] == 'r') flags |= EV_READ;
+                else if (spec[i] == 'w') flags |= EV_WRITE;
+        }
+        return flags;
+}
+
+static int parse_flag_spec(lua_State *L, int idx) {
+        int t = lua_type(L, idx);
+        switch (t) {
+        case LUA_TNUMBER:
                 return luaL_checkinteger(L, idx);
-        } else if (lua_istable(L, idx)) {
+        case LUA_TTABLE:
                 return table_to_flags(L, idx);
-        } else {
+        case LUA_TSTRING:       /* r, w, or rw */
+                return str_to_flags(L, idx);
+        default:
                 do_error(L, "Flag int or table expected");
                 return -1;
         }
@@ -443,7 +455,7 @@ static int flags_of_int_or_table(lua_State *L, int idx) {
 
 static int lev_io_init(lua_State *L) {
         int fd = luaL_checkinteger(L, 1);
-        int flags = flags_of_int_or_table(L, 2);
+        int flags = parse_flag_spec(L, 2);
         lua_pop(L, 2);
         ALLOC_UDATA_AND_WATCHER(io);
         ev_io_init(io->t, (void *)call_luafun_cb, fd, flags);
@@ -455,8 +467,9 @@ static int lev_io_init(lua_State *L) {
 static int lev_io_set(lua_State *L) {
         Lev_io *w = CHECK_WATCHER(1, io);
         int fd = luaL_checkinteger(L, 2);
-        int flags = flags_of_int_or_table(L, 3);
+        int flags = parse_flag_spec(L, 3);
 /*         printf(" -- Setting IO flags to %d for fd %d\n", flags, fd); */
+        if (ev_is_active(w->t)) printf("WARNING: setting active io watcher\n");
         ev_io_set(w->t, fd, flags);
         return 0;
 }
@@ -656,26 +669,53 @@ DEF_WATCHER_METHODS(async);
 /* Callbacks */
 /*************/
 
-/* TODO I REALLY need to do error checking! XXX FIXME */
+static void stacktrace(lua_State *L) {
+        lua_Debug ar;
+        int i;
+        int ht = lua_gettop(L);
+        for (i=1; i <= ht; i++) { 
+                if (lua_getstack(L, i, &ar) == 0) break;
+                printf("%d - %s - %s\n", i, ar.name, ar.source);
+        }
+}
+
+static const char *err_handler_tag = "lev_error_handler";
+static int def_error_handler(lua_State *L) {
+        const char *e = lua_tostring(L, 1);
+        printf(" *** In error handler (%d) ------> %s\n",
+            lua_gettop(L), e);
+        pr_stack(L);
+        lua_pop(L, 1);
+        lua_pushboolean(L, 0);
+        lua_pushstring(L, e);
+/*         lua_pop(L, 1); */
+/*         lua_pushboolean(L, 0); */
+        pr_stack(L);
+/*         lua_pushstring(L, "an error occurred"); */
+        return 2;
+}
+
+
 static void call_luafun_cb(struct ev_loop *l, ev_watcher *w, int events) {
         lua_State *L = ev_userdata(l);
         if (L == NULL) {printf("null L\n"); return; }
-        lua_pop(L, lua_gettop(L));
+        lua_pop(L, lua_gettop(L));          /* ? */
         lua_pushlightuserdata(L, w);        /* [ev_w] */
         lua_gettable(L, LUA_REGISTRYINDEX); /* [Lev_w] */
-        lua_pushvalue(L, -1);               /* [Lev_w Lev_w] */
-        lua_gettable(L, LUA_REGISTRYINDEX); /* [Lev_w, callback] */
-        lua_insert(L, -2);                  /* [callback, Lev_w] */
+        lua_pushstring(L, err_handler_tag); /* [Lev_w "errtag"] */
+        lua_gettable(L, LUA_REGISTRYINDEX); /* [Lev_w err_cb] */
+        lua_insert(L, -2);                  /* [err_cb Lev_w] */
+        lua_pushvalue(L, -1);               /* [err_cb Lev_w Lev_w] */
+        lua_gettable(L, LUA_REGISTRYINDEX); /* [err_cb Lev_w cb] */
+        lua_insert(L, -2);                  /* [err_cb cb Lev_w] */
         if (DEBUG) printf("top=%d, events=%d, cbtype=%d, "
                           "fun/coro=0x%lx, Lev_w(%d)=0x%lx\n",
             lua_gettop(L), events, lua_type(L, -2),
             (long)lua_topointer(L, -2),
             lua_type(L, -1), (long)lua_topointer(L, -1));
-        if (DEBUG) pr_stack(L);
+        if (0 && DEBUG) pr_stack(L);
 
-        /* What we should do here is clear the callback to the
-         * relevant watcher if there's an error. */
-
+        int had_error=0;
         if (lua_isthread(L, -2)) {
                 lua_State *Coro = (void *)lua_topointer(L, -2);
                 lua_xmove(L, Coro, 1);      /* pass Lev_w to coro */
@@ -684,31 +724,33 @@ static void call_luafun_cb(struct ev_loop *l, ev_watcher *w, int events) {
                         printf("About to resume coroutine: %d\n", lua_status(Coro));
                         pr_stack(Coro);
                 }
+                printf("resuming coroutine %lx\n", (long)Coro);
                 int res = lua_resume(Coro, 2);
                 if (res > LUA_YIELD || lua_gettop(L) > 1 || DEBUG) {
                         puts("After coro"); pr_stack(Coro);
                 }
                 if (res > LUA_YIELD) {
-                        puts("*** coro crashed");
-                        lua_pushlightuserdata(L, w);
-                        lua_pushnil(L);
-                        lua_settable(L, LUA_REGISTRYINDEX);
+                        printf("*** coro crashed, clearing callback, %d\n", res);
+                        puts("CORO_STACK");
+                        stacktrace(Coro);
+                        puts("L_STACK");
+                        stacktrace(L);
+                        had_error = 1;
                 }
                 lua_pop(L, 1);
         } else if (lua_isfunction(L, -2)) {
-                flags_to_table(L, events);  /* [cb, Lev_w, event_t] */
-                if (DEBUG) { puts("About to call Lua callback fun"); pr_stack(L); }
-                int res = lua_pcall(L, 2, 0, 0);
+                flags_to_table(L, events);  /* [err_cb, cb, Lev_w, event_t] */
+                if (1 || DEBUG) { puts("About to call Lua callback fun"); pr_stack(L); }
+                int res = lua_pcall(L, 2, 0, -4);
                 if (res || lua_gettop(L) > 1 || DEBUG) {
-                        puts("After callback fun"); pr_stack(L);
-                        assert(0);
+                        printf("After callback fun: %d\n", res);
+                        pr_stack(L);
                 }
 
                 if (res) {
-                        puts("*** fun crashed");
-                        lua_pushlightuserdata(L, w);
-                        lua_pushnil(L);
-                        lua_settable(L, LUA_REGISTRYINDEX);
+                        puts("*** fun crashed, clearing callback");
+                        /* FIXME should also stop the relevant watcher */
+                        had_error = 1;
                 }
 /*                 lua_pop(L, 1); */
         } else {
@@ -716,6 +758,11 @@ static void call_luafun_cb(struct ev_loop *l, ev_watcher *w, int events) {
                 lua_pop(L, 2);
         }
         if (DEBUG) { puts("after"); pr_stack(L); }
+        if (had_error) {
+                lua_pushlightuserdata(L, w);
+                lua_pushnil(L);
+                lua_settable(L, LUA_REGISTRYINDEX);
+        }
 }
 
 
@@ -858,6 +905,10 @@ int luaopen_evc(lua_State *L) {
         lua_pop(L, 1);
 
         def_watchers(L);
+
+        lua_pushstring(L, err_handler_tag);
+        lua_pushcfunction(L, def_error_handler);
+        lua_settable(L, LUA_REGISTRYINDEX);
 
         printf("top: %d\n", lua_gettop(L));
         luaL_register(L, "evc", evlib);

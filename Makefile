@@ -8,6 +8,9 @@ clean:
 gdb:
 	gdb `which lua` lua.core
 
+tags:
+	etags *.c *.h *.lua
+
 test: ${LIBNAME}${LIBEXT}
 	${LUA} ${TESTSUITE}
 

@@ -15,9 +15,10 @@ idle:set_cb(function () run_job_queue(job_queue) end)
 idle:start(loop)
 
 local out_queue = {}
+local watchers = setmetatable({}, {__mode="kv"})
 
-local function close(w, c)
-   w:stop(subloop)
+local function close(c)
+   for _,w in ipairs(watchers[c] or {}) do w:stop(subloop) end
    out_queue[c] = nil
    c:close()
    con_ct = con_ct - 1
@@ -28,12 +29,17 @@ function run_job_queue(q)
    if next(q) then              --not empty
       local new_q = {}
       for job,info in pairs(q) do
-         local ok, rest = coroutine.resume(job)
-         local status = coroutine.status(job)
-         if status == "suspended" then 
-            new_q[job] = info
-         elseif not ok then
-            print("job died -> ", rest, status) -- TODO real error handling
+         local jt = type(job)
+         if jt == "function" then job()
+         elseif jt == "thread" then
+            print("rezoom")
+            local ok, rest = coroutine.resume(job)
+            local status = coroutine.status(job)
+            if status == "suspended" then 
+               new_q[job] = info
+            elseif not ok then
+               print("job died -> ", rest, status) -- TODO real error handling
+            end
          end
       end
       job_queue = new_q
@@ -43,39 +49,70 @@ function run_job_queue(q)
 end
 
 
-local function queue_send(iow, client, data)
+local function writer(c)
+   assert(c, "no client")
+   return coroutine.create(
+      function(w, ev)
+         while true do
+            print "writer"
+            if ev.write then
+               print("sendbuf? ", sendbuf)
+               if sendbuf(c) then
+                  print " -----> finishing"
+                  return
+               end
+            end
+            w, ev = coroutine.yield()
+            print "whirr"
+         end
+         print "*blaff"
+      end)
+end
+
+
+local function queue_send(client, data)
    local q = out_queue[client] or {}
    table.insert(q, 1, data)
    out_queue[client] = q
-   iow:stop(subloop)
-   iow:set(client:getfd(), { read=true, write=true })
-   iow:start(subloop)
+   print(#out_queue[client])
+   local wr = assert(evc.io_init(client:getfd(), { write=true }))
+   wr:set_cb(writer(client))
+   wr:start(subloop)
+
+   local ws = watchers[client] or {}
+   ws[#ws+1] = wr
+   watchers[client] = ws
    print("should now listen for write")
 end
 
 
-local function sendbuf(iow, client)
+function sendbuf(client)
+   assert(client)
+   local q = out_queue[client] or {}
    if #q > 0 then
-      local data = table.remove(out_queue, 1)
-      print("TRYING TO SEND: ", data)
-      local sent, err, partial = c:send(data)
+      local data = table.remove(q, 1)
+      print("Trying to send: ", data, client)
+      local sent, err, partial = client:send(data)
+      print("SEP", sent, err, partial)
       if not sent then
-         if err == "closed" then close(w, c)
+         if err == "closed" then close(client)
          elseif partial then
-            queue_send(iow, client, data:sub(partial))
+            queue_send(client, data:sub(partial))
          end
       end
+   else
+      return true               --done
    end
 end   
 
 
-function spawn(coro_job, info)
-   if type(coro_job) ~= "thread" then
-      print "spawn argument must be coroutine"
-      return
+function spawn(job, info)
+   local jt = type(job)
+   if jt == "thread" or jt == "function" then
+      job_queue[job] = info or true
+   else
+      print "spawn argument must be function or coroutine"
    end
-   info = info or true
-   job_queue[coro_job] = info
 end
 
 
@@ -93,35 +130,26 @@ local function listener(iow, c)
    return coroutine.create(
       function(w, ev)
          while true do
-            print("pending? ", w:is_pending(), w:is_active())
-            my.dump(ev)
-            if ev.write then
-               printf("GOT WRITE FLAG")
-               sendbuf(iow, c)
-            end
-
+            print "listener"
             if ev.read then
                local ok, err, rest = c:receive()
-               print(ok, err, rest)
                local msg = ok or rest
                if msg ~= "" then 
                   print("queueing send", msg:upper())
-                  queue_send(iow, c, msg:upper())
-                  spawn(echoer(msg))
+                  queue_send(c, msg:upper())
+                  spawn(echoer(msg), "echoer")
                   msg_ct = msg_ct + 1
                elseif err == "closed" then
-                  c:close()
-                  iow:stop(subloop)
+                  close(c)
                   return
+               elseif err == "timeout" then
+                  -- nop
                else
-                  -- got an empty read, argh
-                  iow:clear_pending(subloop)
-                  iow:set(c:getfd(), 3)
-                  iow:start(subloop)
+                  print "WTF????"
                end
             end
 
-            coroutine.yield()
+            w, ev = coroutine.yield()
          end
       end)
 end
@@ -131,9 +159,12 @@ local function add_client(c)
    print("Got one: ", c)
    c:settimeout(0)
    con_ct = con_ct + 1
-   local iow = evc.io_init(c:getfd(), { read=true })
-   iow:set_cb(listener(iow, c))
-   iow:start(subloop)
+   local rw = evc.io_init(c:getfd(), { read=true })
+   rw:set_cb(listener(rw, c))
+   rw:start(subloop)
+   local ws = watchers[client] or {}
+   ws[#ws+1] = rw
+   watchers[c] = ws
 end
 
 
@@ -144,8 +175,6 @@ local function acceptor(iow, sock)
                 add_client(client)
                 client, err = sock:accept()
              end
-             iow:stop(subloop)
-             iow:start(subloop)
           end
 end
 
@@ -165,7 +194,7 @@ function main(port)
               end)
    tim:start(loop)
 
-   local iow = evc.io_init(s:getfd(), 1) --{ read=true }
+   local iow = evc.io_init(s:getfd(), "r" )
    iow:set_cb(acceptor(iow, s))
    iow:start(subloop)
    print("listening on port ", port)

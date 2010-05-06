@@ -4,6 +4,7 @@
 #define DEBUG 0
 #define BUFSZ 1024
 
+
 /**************/
 /* Prototypes */
 /**************/
@@ -68,6 +69,8 @@ static void call_luafun_cb(struct ev_loop *l, ev_watcher *w, int events);
         lua_setfield(L, -2, "__watcher");           \
         lua_pushcfunction(L, name##_tostring);      \
         lua_setfield(L, -2, "__tostring");          \
+        lua_pushcfunction(L, name##_free);          \
+        lua_setfield(L, -2, "__gc");                \
         lua_pushvalue(L, -1);                       \
         lua_setfield(L, -1, "__index");             \
         luaL_register(L, NULL, MTNAME(name));       \
@@ -90,23 +93,28 @@ static void call_luafun_cb(struct ev_loop *l, ev_watcher *w, int events);
 #define TOSTRING_WATCHER(type)                      \
 
 #define DEF_WATCHER_METHODS(type)                   \
-        static int lev_##type##_start(lua_State *L){  \
-        PRE_LEV(type) *w = CHECK_WATCHER(1, type);  \
-        Lev_loop *loop = check_ev_loop(L, 2);       \
-        ev_##type##_start(loop->t, w->t);           \
-        return 0;                                   \
-        }                                           \
-        static int lev_##type##_stop(lua_State *L){ \
-        PRE_LEV(type) *w = CHECK_WATCHER(1, type);  \
-        Lev_loop *loop = check_ev_loop(L, 2);       \
-        ev_##type##_stop(loop->t, w->t);            \
-        return 0;                                   \
-        }                                           \
-        static int type##_tostring(lua_State *L) {  \
-        PRE_LEV(type) *w = CHECK_WATCHER(1, type);  \
-        lua_pushfstring(L, "%s_watcher: %p", #type, w); \
-        return 1;                                   \
-        }
+        static int lev_##type##_start(lua_State *L){    \
+                PRE_LEV(type) *w = CHECK_WATCHER(1, type);      \
+                Lev_loop *loop = check_ev_loop(L, 2);           \
+                ev_##type##_start(loop->t, w->t);               \
+                return 0;                                       \
+        }                                                       \
+        static int lev_##type##_stop(lua_State *L){             \
+                PRE_LEV(type) *w = CHECK_WATCHER(1, type);      \
+                Lev_loop *loop = check_ev_loop(L, 2);           \
+                ev_##type##_stop(loop->t, w->t);                \
+                return 0;                                       \
+        }                                                       \
+        static int type##_tostring(lua_State *L) {              \
+                PRE_LEV(type) *w = CHECK_WATCHER(1, type);      \
+                lua_pushfstring(L, "%s_watcher: %p", #type, w); \
+                return 1;                                       \
+        }                                                       \
+        static int type##_free(lua_State *L) {                  \
+                PRE_LEV(type) *w = CHECK_WATCHER(1, type);      \
+                free(w->t);                                     \
+                return 0;                                       \
+        }                                                       \
 
 /*  PRE_LEV(name) *name = (PRE_LEV(name) *) lua_newuserdata(L, sizeof(PRE_LEV(name)) *); \ */
 
