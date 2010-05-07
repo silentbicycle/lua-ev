@@ -7,14 +7,12 @@ local ct = 3
 
 print(loop, tim)
 tim:set_cb(function (w, ev)
-              print("FUN", w, evc.time())
+              print("tick", w, evc.time())
               ct = ct - 1
               if ct == 0 then
-                 print "Throwing error"
-                 error("wocka wocka wocka")
+                 print " -- Throwing error..."
+                 error("the error message")
               end
-              for k,v in pairs(ev) do print("--> ", k,v ) end
-              print ""
            end)
 print "set cb"
 

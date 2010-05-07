@@ -6,14 +6,14 @@ print("loop: ", loop)
 local tim = evc.timer_init(2, 0.5)
 print("timer: ", tim)
 
-local ct = 3
+local ct = 5
 
 print(loop, tim)
 tim:set_cb(function (w, ev)
-              print("FUN", w, evc.time())
               ct = ct - 1
-              if ct == 2 then tim:stop(loop) end
-              for k,v in pairs(ev) do print("--> ", k,v ) end
+              print("tick", w, evc.time())
+              if ct == 0 then tim:stop(loop) end
+              --for k,v in pairs(ev) do print("--> ", k,v ) end
               print ""
            end)
 print "set cb"
