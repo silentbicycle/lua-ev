@@ -525,6 +525,7 @@ static int lev_periodic_set(lua_State *L) {
 }
 
 static int lev_signal_init(lua_State *L) {
+        /* TODO - map signal names ("HUP", etc.) to numbers. */
         int signum = luaL_checkinteger(L, 1);
         lua_pop(L, 1);
         ALLOC_UDATA_AND_WATCHER(signal);
@@ -541,7 +542,7 @@ static int lev_signal_set(lua_State *L) {
 }
 
 static int lev_child_init(lua_State *L) {
-        int pid = luaL_checkinteger(L, 1);
+        int pid = luaL_optnumber(L, 1, 0);
         int trace = 0;
         if (lua_isboolean(L, 2)) {
                 trace = lua_toboolean(L, 2);
@@ -761,24 +762,24 @@ static void call_luafun_cb(struct ev_loop *l, ev_watcher *w, int events) {
                 res = lua_pcall(L, 2, 0, -4);
                 if (DEBUG) {printf("After callback fun: %d\n", res); pr_stack(L); }
         } else {
-                /* No callback defined. Shouldn't get here. */
-                assert(0);
+                if (DEBUG) puts("No callback defined...clearing.");
+#define DIDNT_HAVE_CALLBACK 8
+                res = DIDNT_HAVE_CALLBACK;
         }
         if (DEBUG) { puts("after"); pr_stack(L); }
         if (res > LUA_YIELD) {  /* On error, stop watcher + clear callback */
                 if (DEBUG) { printf("*** crashed, clearing callback, %d\n", res); pr_stack(L); }
-                /* call lev_w.stop(lev_w, l) */
                 lua_pushlightuserdata(L, w);
                 lua_gettable(L, LUA_REGISTRYINDEX);
                 lua_pushstring(L, "stop");
-                lua_gettable(L, -2); /* -> lev_w.stop */
+                lua_gettable(L, -2);
                 lua_pushvalue(L, -2); /* [lev_w.stop, lev_w] */
 
                 lua_pushlightuserdata(L, l); /* [lev_w.stop, lev_w, ev_loop] */
                 lua_gettable(L, LUA_REGISTRYINDEX); /* [lev_w.stop, lev_w, lev_loop] */
-                lua_call(L, 2, 0);
+                lua_call(L, 2, 0); /* lev_w.stop(lev_w, l) */
 
-                /* And clear watcher -> lev_watcher */
+                if (DEBUG) puts("Clearing watcher -> lev_watcher from registry");
                 lua_pushlightuserdata(L, w);
                 lua_pushnil(L);
                 lua_settable(L, LUA_REGISTRYINDEX);
