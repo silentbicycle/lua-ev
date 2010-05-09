@@ -18,13 +18,14 @@ assert(iow)
 print "setting io cb"
 iow:set_cb(function (w, ev)
                 print("STDIN is Readable")
-                local data, err = iow:read(0) -- 0->stdin
+                local data, err = emb_loop:read(0) -- 0->stdin
                 print(data, err)
                 iow:stop(loop)
              end)
 print "set io cb"
 
-iow:start(loop)
+iow:start(emb_loop)
+emb:start(loop)
 
 print "about to loop, type something..."
 loop:loop()

@@ -50,12 +50,14 @@ static void do_error(lua_State *L, const char *e) {
         lua_pushstring(L, e); lua_error(L);
 }
 
-/* Do an async, unbuffered read.
- * The loop is just an arbitrary place to keep a buf...maybe use *L as an idx instead! */
+static const char *loop_buf_key = "evc_loopbuf";
+
+/* Do an async, unbuffered read. */
 static int async_read(lua_State *L) {
+        puts("ASYNC_READ");
         check_ev_loop(L, 1);
         int fd = luaL_checkinteger(L, 2);
-        lua_insert(L, 1);
+        lua_pushstring(L, loop_buf_key);
         lua_gettable(L, LUA_REGISTRYINDEX);
         char *buf = (char *) lua_topointer(L, 3);
         if (buf == NULL) {
@@ -231,12 +233,18 @@ static int init_loop_mt(lua_State *L, Lev_loop *lev_loop, struct ev_loop *loop) 
         ev_set_userdata(loop, L);  /* so event loop knows the Lua state for callbacks*/
         luaL_getmetatable(L, "Lev_loop");
         lua_setmetatable(L, -2);
+
+        /* Save loop -> lev_loop in registry, so callbacks can get at it. */
+        lua_pushlightuserdata(L, loop);
+        lua_pushvalue(L, -2);
+        lua_settable(L, LUA_REGISTRYINDEX);
+
         return 1;               /* leaving the loop */
 }
 
 static void register_loop_io_buffer(lua_State *L, struct ev_loop *loop) {
         char *buf = (char *)calloc(BUFSZ, sizeof(char *));
-        lua_pushlightuserdata(L, loop);
+        lua_pushstring(L, loop_buf_key);
         lua_pushlightuserdata(L, buf);
         lua_settable(L, LUA_REGISTRYINDEX);
 }
@@ -271,6 +279,7 @@ static int lev_loop_new(lua_State *L) {
         int flags = get_flag_of_int_or_str(L);
         Lev_loop *lev_loop = (Lev_loop *)lua_newuserdata(L, sizeof(Lev_loop));
         struct ev_loop *loop = ev_loop_new(flags);
+        /* register ev_loop <-> lev_loop */
         register_loop_io_buffer(L, loop);
         return init_loop_mt(L, lev_loop, loop);
 }
@@ -713,7 +722,7 @@ static void call_luafun_cb(struct ev_loop *l, ev_watcher *w, int events) {
         lua_State *L = ev_userdata(l);
         if (L == NULL) { printf("null L\n"); return; }
 
-        printf("TOP %d %d %pl %s\n", lua_gettop(L),
+        if (0) printf("TOP %d %d %pl %s\n", lua_gettop(L),
             lua_type(L, -1), lua_topointer(L, -1), lua_tostring(L, -1));
         lua_pop(L, lua_gettop(L));          /* why? */
 
@@ -749,13 +758,24 @@ static void call_luafun_cb(struct ev_loop *l, ev_watcher *w, int events) {
                 res = lua_pcall(L, 2, 0, -4);
                 if (DEBUG) {printf("After callback fun: %d\n", res); pr_stack(L); }
         } else {
-                /* No callback defined. Shouldn't get here, but not a problem. */
-                lua_pop(L, 2);
+                /* No callback defined. Shouldn't get here. */
+                assert(0);
         }
         if (DEBUG) { puts("after"); pr_stack(L); }
         if (res > LUA_YIELD) {  /* On error, stop watcher + clear callback */
-                printf("*** crashed, clearing callback, %d\n", res);
-                /* FIXME should also stop the relevant watcher */
+                if (DEBUG) { printf("*** crashed, clearing callback, %d\n", res); pr_stack(L); }
+                /* call lev_w.stop(lev_w, l) */
+                lua_pushlightuserdata(L, w);
+                lua_gettable(L, LUA_REGISTRYINDEX);
+                lua_pushstring(L, "stop");
+                lua_gettable(L, -2); /* -> lev_w.stop */
+                lua_pushvalue(L, -2); /* [lev_w.stop, lev_w] */
+
+                lua_pushlightuserdata(L, l); /* [lev_w.stop, lev_w, ev_loop] */
+                lua_gettable(L, LUA_REGISTRYINDEX); /* [lev_w.stop, lev_w, lev_loop] */
+                lua_call(L, 2, 0);
+
+                /* And clear watcher -> lev_watcher */
                 lua_pushlightuserdata(L, w);
                 lua_pushnil(L);
                 lua_settable(L, LUA_REGISTRYINDEX);

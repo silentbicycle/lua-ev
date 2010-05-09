@@ -103,6 +103,7 @@ static void call_luafun_cb(struct ev_loop *l, ev_watcher *w, int events);
                 PRE_LEV(type) *w = CHECK_WATCHER(1, type);      \
                 Lev_loop *loop = check_ev_loop(L, 2);           \
                 ev_##type##_stop(loop->t, w->t);                \
+                if (DEBUG) puts("Stopping " #type " watcher");  \
                 return 0;                                       \
         }                                                       \
         static int type##_tostring(lua_State *L) {              \
