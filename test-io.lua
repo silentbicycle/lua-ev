@@ -19,7 +19,7 @@ print "setting io cb"
 iow:set_cb(function (w, ev)
                 print("STDIN is Readable")
                 local data, err = emb_loop:read(0) -- 0->stdin
-                print(data, err)
+                print("GOT", data, err)
                 iow:stop(loop)
              end)
 print "set io cb"

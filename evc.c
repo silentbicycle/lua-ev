@@ -54,7 +54,7 @@ static const char *loop_buf_key = "evc_loopbuf";
 
 /* Do an async, unbuffered read. */
 static int async_read(lua_State *L) {
-        puts("ASYNC_READ");
+        /* TODO - rather than taking a loop, use the io watcher and its FD */
         check_ev_loop(L, 1);
         int fd = luaL_checkinteger(L, 2);
         lua_pushstring(L, loop_buf_key);
@@ -71,6 +71,7 @@ static int async_read(lua_State *L) {
         if (ct == -1) {
                 lua_pushboolean(L, 0);
                 if (errno == EAGAIN) {
+                        puts("D");
                         errno = 0;
                         lua_pushstring(L, "timeout");
                 } else {
@@ -85,9 +86,11 @@ static int async_read(lua_State *L) {
 
 /* Do an async, unbuffered write. */
 static int async_write(lua_State *L) {
+        /* TODO - rather than taking a loop, use the io watcher and its FD */
+        check_ev_loop(L, 1);
         size_t len, written;
-        int fd = luaL_checkinteger(L, 1);
-        const char *buf = lua_tolstring(L, 2, &len);
+        int fd = luaL_checkinteger(L, 2);
+        const char *buf = lua_tolstring(L, 3, &len);
         if (buf == NULL) do_error(L, "second argument must be string");
         written = write(fd, buf, len);
         if (written == -1) {
