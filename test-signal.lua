@@ -14,6 +14,8 @@ sig:set_cb(function(w, ev)
 
 sig:start(loop)
 
+print("signal number is ", sig:signum())
+
 print "starting loop...(send this process a signal)"
 loop:loop()
 

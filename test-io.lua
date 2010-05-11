@@ -12,7 +12,7 @@ local emb = evc.embed_init(emb_loop)
 print("emb", emb)
 
 print "about to init io watcher"
-local iow = evc.io_init(0, 1) --stdin, read
+local iow = evc.io_init(0, "r") --stdin, read
 assert(iow)
 
 print "setting io cb"
@@ -26,6 +26,8 @@ print "set io cb"
 
 iow:start(emb_loop)
 emb:start(loop)
+
+print("io watcher's file descriptor is ", iow:fd())
 
 print "about to loop, type something..."
 loop:loop()

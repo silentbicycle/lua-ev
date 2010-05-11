@@ -486,6 +486,12 @@ static int lev_io_set(lua_State *L) {
         return 0;
 }
 
+static int lev_io_get_fd(lua_State *L) {
+        Lev_io *w = CHECK_WATCHER(1, io);
+        lua_pushinteger(L, w->t->fd);
+        return 1;
+}
+
 static int lev_timer_init(lua_State *L) {
         double after = luaL_checknumber(L, 1);
         double repeat = luaL_optnumber(L, 2, 0);
@@ -541,6 +547,12 @@ static int lev_signal_set(lua_State *L) {
         return 0;
 }
 
+static int lev_signal_get_signum(lua_State *L) {
+        Lev_signal *w = CHECK_WATCHER(1, signal);
+        lua_pushinteger(L, w->t->signum);
+        return 1;
+}
+
 static int lev_child_init(lua_State *L) {
         int pid = luaL_optnumber(L, 1, 0);
         int trace = 0;
@@ -567,6 +579,12 @@ static int lev_child_set(lua_State *L) {
         return 0;
 }
 
+static int lev_child_get_pid(lua_State *L) {
+        Lev_child *w = CHECK_WATCHER(1, child);
+        lua_pushinteger(L, w->t->pid);
+        return 1;
+}
+
 static int lev_stat_init(lua_State *L) {
         const char* path = luaL_checkstring(L, 1);
         double interval = 0;
@@ -591,6 +609,12 @@ static int lev_stat_set(lua_State *L) {
         }
         ev_stat_set(w->t, path, interval);
         return 0;
+}
+
+static int lev_stat_get_path(lua_State *L) {
+        Lev_stat *w = CHECK_WATCHER(1, stat);
+        lua_pushstring(L, w->t->path);
+        return 1;
 }
 
 static int lev_idle_init(lua_State *L) {
@@ -889,6 +913,7 @@ static void def_watchers(lua_State *L) {
 
         GET_WATCHER_MT(io);
         SETMETHOD(set, lev_io_set);
+        SETMETHOD(fd, lev_io_get_fd);
         
         GET_WATCHER_MT(timer);
         SETMETHOD(set, lev_timer_set);
@@ -898,12 +923,15 @@ static void def_watchers(lua_State *L) {
         
         GET_WATCHER_MT(signal);
         SETMETHOD(set, lev_signal_set);
+        SETMETHOD(signum, lev_signal_get_signum);
         
         GET_WATCHER_MT(child);
         SETMETHOD(set, lev_child_set);
+        SETMETHOD(pid, lev_child_get_pid);
         
         GET_WATCHER_MT(stat);
         SETMETHOD(set, lev_stat_set);
+        SETMETHOD(path, lev_stat_get_path);
         
         GET_WATCHER_MT(embed);
         SETMETHOD(set, lev_embed_set);

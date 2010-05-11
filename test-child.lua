@@ -15,7 +15,7 @@ end
 
 
 local chi = evc.child_init(pid)
-print("child watcher: ", chi)
+print("child watcher: ", chi, "pid: ", pid)
 
 local ct = 0
 chi:set_cb(function(w, ev)

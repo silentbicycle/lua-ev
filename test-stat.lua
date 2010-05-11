@@ -14,6 +14,8 @@ stat:set_cb(function(w, ev)
 
 stat:start(loop)
 
+print("stat's path is", stat:path())
+
 print "starting loop"
 loop:loop()
 
