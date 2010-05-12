@@ -23,9 +23,11 @@ flaghash.h: gen_perfhash.lua
 backendhash.h: gen_perfhash.lua
 	${LUA} gen_perfhash.lua "EVBACKEND_" ${EV_BACKENDS} > $@
 
-
 ${LIBNAME}.c: ${LIBNAME}.h flaghash.h backendhash.h
 
 ${LIBNAME}${LIBEXT}: ${LIBNAME}.c
 	${CC} -o $@ $> ${CFLAGS} ${LUA_FLAGS} ${INC} \
 		${LIB_PATHS} ${LIBS}
+
+lint:
+	${LINT} ${INC} ${LUA_INC} ${LIBNAME}.c

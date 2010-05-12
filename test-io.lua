@@ -26,7 +26,7 @@ assert(iow, "io watcher init failed")
 print "-- setting io cb"
 iow:set_cb(function (w, ev)
                 print("STDIN is Readable")
-                local data, err = emb_loop:read(iow:fd())
+                local data, err = iow:read()
                 print(string.format("GOT: %q, error=%s", data, tostring(err)))
                 iow:stop(loop)
              end)

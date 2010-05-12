@@ -37,8 +37,8 @@ static const char* l_typename(int t) {
 
 static void pr_stack(lua_State *L) {
         int ct = lua_gettop(L);
-        printf("----------\nStack height is %d\n", ct);
         int i;
+        printf("----------\nStack height is %d\n", ct);
         for (i=1; i <= ct; i++)
                 printf("    %d: %s\t%s %lx\n",
                     i, l_typename(lua_type(L, i)),
@@ -54,12 +54,13 @@ static const char *loop_buf_key = "evc_loopbuf";
 
 /* Do an async, unbuffered read. */
 static int async_read(lua_State *L) {
-        /* TODO - rather than taking a loop, use the io watcher and its FD */
-        check_ev_loop(L, 1);
-        int fd = luaL_checkinteger(L, 2);
+        Lev_io *w = CHECK_WATCHER(1, io);
+        int fd = luaL_optint(L, 2, w->t->fd);
+        char *buf;
+        long ct;
         lua_pushstring(L, loop_buf_key);
         lua_gettable(L, LUA_REGISTRYINDEX);
-        char *buf = (char *) lua_topointer(L, 3);
+        buf = (char *) lua_topointer(L, -1);
         if (buf == NULL) {
                 lua_pushboolean(L, 0);
                 printf("errno is %d\n", errno);
@@ -67,7 +68,7 @@ static int async_read(lua_State *L) {
                 return 2;
         }
         
-        int ct = read(fd, buf, BUFSZ);
+        ct = read(fd, buf, BUFSZ);
         if (ct == -1) {
                 lua_pushboolean(L, 0);
                 if (errno == EAGAIN) {
@@ -79,17 +80,17 @@ static int async_read(lua_State *L) {
                 }
                 return 2;
         } else {
-                lua_pushlstring(L, buf, ct);
+                lua_pushlstring(L, buf, (unsigned long)ct);
                 return 1;
         }
 }
 
 /* Do an async, unbuffered write. */
 static int async_write(lua_State *L) {
-        /* TODO - rather than taking a loop, use the io watcher and its FD */
-        check_ev_loop(L, 1);
-        size_t len, written;
-        int fd = luaL_checkinteger(L, 2);
+        Lev_io *w = CHECK_WATCHER(1, io);
+        size_t len;
+        long written;
+        int fd = luaL_optint(L, 2, w->t->fd);
         const char *buf = lua_tolstring(L, 3, &len);
         if (buf == NULL) do_error(L, "second argument must be string");
         written = write(fd, buf, len);
@@ -110,7 +111,7 @@ static int async_write(lua_State *L) {
 
 /* int w/ bitflags -> table */
 static int flags_to_table(lua_State *L, int flags) {
-        int i;
+        unsigned int i;
         lua_newtable(L);
 
         for (i=1; i < EV_ERROR; i <<= 1) {
@@ -136,28 +137,28 @@ static int flags_to_table(lua_State *L, int flags) {
         return 1;
 }
 
-static int getflag(int f, const char *tag) {
+static unsigned int getflag(const char *tag) {
 #include "flaghash.h"
 }
 
 /* table -> int w/ bitflags */
-static int table_to_flags(lua_State *L, int idx) {
+static unsigned int table_to_flags(lua_State *L, int idx) {
         const char* flagname;
+        unsigned int flags = 0;
         if (!lua_istable(L, idx)) {
                 lua_pushfstring(L, "Table or expected at argument #%d\n", idx);
                 lua_error(L);
         }
-        int flags = 0;
         lua_pushnil(L);
         while (lua_next(L, idx)) { /* stack: [-2=k, -1=v] */
                 lua_pop(L, 1);    /* we don't need the val */
                 flagname = luaL_checkstring(L, -1);
-                flags |= getflag(flags, flagname);
+                flags |= getflag(flagname);
         }
         return flags;
 }
 
-static const char* backend_to_name(int be) {
+static const char* backend_to_name(unsigned int be) {
         const char* name;
         switch (be) {
         case EVFLAG_AUTO: name = "auto"; break;
@@ -173,7 +174,7 @@ static const char* backend_to_name(int be) {
 }
 
 static int backends_to_table(lua_State *L, int bes) {
-        int i;
+        uint i;
         lua_newtable(L);
 
         for (i=1; i <= EVBACKEND_PORT; i <<= 1) {
@@ -245,14 +246,14 @@ static int init_loop_mt(lua_State *L, Lev_loop *lev_loop, struct ev_loop *loop) 
         return 1;               /* leaving the loop */
 }
 
-static void register_loop_io_buffer(lua_State *L, struct ev_loop *loop) {
+static void register_loop_io_buffer(lua_State *L) {
         char *buf = (char *)calloc(BUFSZ, sizeof(char *));
         lua_pushstring(L, loop_buf_key);
         lua_pushlightuserdata(L, buf);
         lua_settable(L, LUA_REGISTRYINDEX);
 }
 
-static int get_flag_of_int_or_str(lua_State *L) {
+static unsigned int get_flag_of_int_or_str(lua_State *L) {
         if (lua_gettop(L) == 0)
                 return 0;
         else if (lua_isnumber(L, 1))
@@ -260,7 +261,7 @@ static int get_flag_of_int_or_str(lua_State *L) {
         else if (lua_isstring(L, 1)) {
                 const char *name = lua_tostring(L, 1);
                 int n = name_to_backend(name);
-                if (n == -1) {
+                if (n < 0) {
                         lua_pushfstring(L, "Unknown backend: %s", name);
                         lua_error(L);
                 }
@@ -271,19 +272,19 @@ static int get_flag_of_int_or_str(lua_State *L) {
 }
 
 static int lev_default_loop(lua_State *L) {
-        int flags = get_flag_of_int_or_str(L);
+        unsigned int flags = get_flag_of_int_or_str(L);
         Lev_loop *lev_loop = (Lev_loop *)lua_newuserdata(L, sizeof(Lev_loop));
         struct ev_loop *loop = ev_default_loop(flags);
-        register_loop_io_buffer(L, loop);
+        register_loop_io_buffer(L);
         return init_loop_mt(L, lev_loop, loop);
 }
 
 static int lev_loop_new(lua_State *L) {
-        int flags = get_flag_of_int_or_str(L);
+        unsigned int flags = get_flag_of_int_or_str(L);
         Lev_loop *lev_loop = (Lev_loop *)lua_newuserdata(L, sizeof(Lev_loop));
         struct ev_loop *loop = ev_loop_new(flags);
         /* register ev_loop <-> lev_loop */
-        register_loop_io_buffer(L, loop);
+        register_loop_io_buffer(L);
         return init_loop_mt(L, lev_loop, loop);
 }
 
@@ -330,7 +331,7 @@ static int lev_step(lua_State *L) { /* only do one event sweep */
 
 static int lev_unloop(lua_State *L) {
         Lev_loop *loop = check_ev_loop(L, 1);
-        int flags = luaL_checknumber(L, 2);
+        int flags = luaL_checkinteger(L, 2);
         ev_unloop(loop->t, flags);
         return 0;
 }
@@ -397,8 +398,8 @@ watcher_bool(ev_is_pending)
 /* Set a callback: [ ev_watcher *w, luafun or coro ] */
 static int lev_set_cb(lua_State *L) {
         Lev_watcher *watcher = check_watcher(L, 1);
-        if (watcher == NULL) do_error(L, bad_watcher);
         int cbtype = lua_type(L, 2);
+        if (watcher == NULL) do_error(L, bad_watcher);
         if (cbtype == LUA_TNIL || cbtype == LUA_TFUNCTION
             || cbtype == LUA_TTHREAD) {
                 lua_settable(L, LUA_REGISTRYINDEX); /* reg[Lev_w] -> cb */
@@ -410,8 +411,8 @@ static int lev_set_cb(lua_State *L) {
 
 static int lev_set_priority(lua_State *L) {
         Lev_watcher *w = check_watcher(L, 1);
+        int prio = luaL_checkinteger(L, 2);
         if (w == NULL) do_error(L, bad_watcher);
-        int prio = luaL_checknumber(L, 2);
         ev_set_priority((w->t), prio);
         return 0;
 }
@@ -466,10 +467,12 @@ static int parse_flag_spec(lua_State *L, int idx) {
 }
 
 static int lev_io_init(lua_State *L) {
-        int fd = luaL_checkinteger(L, 1);
-        int flags = parse_flag_spec(L, 2);
+        unsigned int fd = luaL_checkinteger(L, 1);
+        unsigned int flags = parse_flag_spec(L, 2);
+        if (flags && EV_ERROR) do_error(L, "Bad flags");
         lua_pop(L, 2);
         ALLOC_UDATA_AND_WATCHER(io);
+
         ev_io_init(io->t, (void *)call_luafun_cb, fd, flags);
 /*         printf(" -- Initiating IO w/ flags=%d for fd %d\n", flags, fd); */
         REGISTER_WATCHER(io);
@@ -480,6 +483,7 @@ static int lev_io_set(lua_State *L) {
         Lev_io *w = CHECK_WATCHER(1, io);
         int fd = luaL_checkinteger(L, 2);
         int flags = parse_flag_spec(L, 3);
+        if (flags && EV_ERROR) do_error(L, "Bad flags");
 /*         printf(" -- Setting IO flags to %d for fd %d\n", flags, fd); */
         if (ev_is_active(w->t)) printf("WARNING: setting active io watcher\n");
         ev_io_set(w->t, fd, flags);
@@ -706,33 +710,6 @@ DEF_WATCHER_METHODS(async);
 /* Callbacks */
 /*************/
 
-/* static void push_stacktrace(lua_State *L) { */
-/*         /\* keep nonstring error it intact *\/ */
-/*         if (!lua_isstring(L, 1)) return 1; */
-
-/*         lua_getfield(L, LUA_GLOBALSINDEX, "debug"); */
-/*         if (!lua_istable(L, -1)) { lua_pop(L, 1); return 1; } */
-/*         lua_getfield(L, -1, "traceback"); */
-/*         if (!lua_isfunction(L, -1)) { lua_pop(L, 2); return 1; } */
-/*         lua_pushvalue(L, 1);    /\* pass error message *\/ */
-/*         lua_pushinteger(L, 2);  /\* skip this function and traceback *\/ */
-/*         lua_call(L, 2, 1);      /\* call debug.traceback *\/ */
-/*         return 1; */
-/* }         */
-
-
-static void stacktrace(lua_State *L) {
-        /* FIXME */
-        return;
-        lua_Debug ar;
-        int i;
-        int ht = lua_gettop(L);
-        for (i=0; i <= ht; i++) { 
-                if (lua_getstack(L, i, &ar) == 0) break;
-                printf("%d - %s - %s\n", i, ar.name, ar.source);
-        }
-}
-
 static const char *err_handler_tag = "lev_error_handler";
 static int def_error_handler(lua_State *L) {
         const char *e = lua_tostring(L, 1);
@@ -740,9 +717,6 @@ static int def_error_handler(lua_State *L) {
             lua_gettop(L), e);
         pr_stack(L);
         return 1;
-/*         lua_pushboolean(L, 0); */
-/*         lua_pushstring(L, e); */
-/*         return 2; */
 }
 
 
@@ -869,8 +843,6 @@ static const struct luaL_Reg loop_mt [] = {
         { "set_timeout_collect_interval", lev_set_timeout_collect_interval },
         { "timer_start", lev_timer_start },
         { "io_start", lev_io_start },
-        { "read", async_read },
-        { "write", async_write },
         { NULL, NULL },
 };
 
@@ -914,6 +886,8 @@ static void def_watchers(lua_State *L) {
         GET_WATCHER_MT(io);
         SETMETHOD(set, lev_io_set);
         SETMETHOD(fd, lev_io_get_fd);
+        SETMETHOD(read, async_read);
+        SETMETHOD(write, async_write);
         
         GET_WATCHER_MT(timer);
         SETMETHOD(set, lev_timer_set);

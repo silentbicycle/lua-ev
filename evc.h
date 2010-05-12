@@ -30,7 +30,7 @@ static void call_luafun_cb(struct ev_loop *l, ev_watcher *w, int events);
 }
 
 #define push_backend_table(fun)                     \
-        static int PRE_L(fun)(lua_State *L) {       \
+        static int PRE_L(fun)(lua_State *L) { \
         backends_to_table(L, fun());                \
         return 1;                                   \
 }
