@@ -413,7 +413,7 @@ static int lev_set_priority(lua_State *L) {
         Lev_watcher *w = check_watcher(L, 1);
         int prio = luaL_checkinteger(L, 2);
         if (w == NULL) do_error(L, bad_watcher);
-        ev_set_priority((w->t), prio);
+        ev_set_priority(w->t, prio);
         return 0;
 }
 
@@ -444,7 +444,7 @@ static int str_to_flags(lua_State *L, int idx) {
         int i, flags=0;
         const char *spec = lua_tostring(L, idx);
         for (i=0; i < 2; i++) {
-                if (spec[i] == '\0') return flags;
+                if (spec[i] == '\0') break;
                 else if (spec[i] == 'r') flags |= EV_READ;
                 else if (spec[i] == 'w') flags |= EV_WRITE;
         }
@@ -462,14 +462,14 @@ static int parse_flag_spec(lua_State *L, int idx) {
                 return str_to_flags(L, idx);
         default:
                 do_error(L, "Flag int or table expected");
-                return -1;
+                return EV_ERROR;
         }
 }
 
 static int lev_io_init(lua_State *L) {
         unsigned int fd = luaL_checkinteger(L, 1);
         unsigned int flags = parse_flag_spec(L, 2);
-        if (flags && EV_ERROR) do_error(L, "Bad flags");
+        if (flags & EV_ERROR) do_error(L, "Bad flags");
         lua_pop(L, 2);
         ALLOC_UDATA_AND_WATCHER(io);
 
@@ -933,7 +933,6 @@ int luaopen_evc(lua_State *L) {
         lua_pushcfunction(L, def_error_handler);
         lua_settable(L, LUA_REGISTRYINDEX);
 
-        printf("top: %d\n", lua_gettop(L));
         luaL_register(L, "evc", evlib);
         return 1;
 }
