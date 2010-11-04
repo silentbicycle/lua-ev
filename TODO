@@ -1,6 +1,7 @@
 -*- mode: outline; outline-regexp: " *[*+.-] "; -*-
 * lua-ev
  * TODO set up non-interactive test suite?
+ * TODO scrutinize the error-handling code
  * TODO other functions of interest:
   + TODO ev_once -> combined one-shot IO / timeout watcher
   + TODO ev_feed_event -> synthetic event
