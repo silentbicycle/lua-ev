@@ -6,6 +6,7 @@
 #include <lauxlib.h>
 #include <ev.h>
 #include <assert.h>
+#include <string.h>
 
 #include "evc.h"
 
@@ -35,6 +36,7 @@ static const char* l_typename(int t) {
         }
 }
 
+/* Print stack, for debugging. */
 static void pr_stack(lua_State *L) {
         int ct = lua_gettop(L);
         int i;
@@ -137,8 +139,24 @@ static int flags_to_table(lua_State *L, int flags) {
         return 1;
 }
 
-static unsigned int getflag(const char *tag) {
-#include "flaghash.h"
+static unsigned int getflag(lua_State *L, const char *tag) {
+        if (strcmp(tag, "async") == 0) return EV_ASYNC;
+        if (strcmp(tag, "check") == 0) return EV_CHECK;
+        if (strcmp(tag, "child") == 0) return EV_CHILD;
+        if (strcmp(tag, "custom") == 0) return EV_CUSTOM;
+        if (strcmp(tag, "embed") == 0) return EV_EMBED;
+        if (strcmp(tag, "error") == 0) return EV_ERROR;
+        if (strcmp(tag, "fork") == 0) return EV_FORK;
+        if (strcmp(tag, "idle") == 0) return EV_IDLE;
+        if (strcmp(tag, "periodic") == 0) return EV_PERIODIC;
+        if (strcmp(tag, "prepare") == 0) return EV_PREPARE;
+        if (strcmp(tag, "read") == 0) return EV_READ;
+        if (strcmp(tag, "signal") == 0) return EV_SIGNAL;
+        if (strcmp(tag, "stat") == 0) return EV_STAT;
+        if (strcmp(tag, "timer") == 0) return EV_TIMER;
+        if (strcmp(tag, "write") == 0) return EV_WRITE;
+        do_error(L, "Bad tag");
+        return -1;
 }
 
 /* table -> int w/ bitflags */
@@ -153,7 +171,7 @@ static unsigned int table_to_flags(lua_State *L, int idx) {
         while (lua_next(L, idx)) { /* stack: [-2=k, -1=v] */
                 lua_pop(L, 1);    /* we don't need the val */
                 flagname = luaL_checkstring(L, -1);
-                flags |= getflag(flagname);
+                flags |= getflag(L, flagname);
         }
         return flags;
 }
@@ -191,8 +209,15 @@ static int backends_to_table(lua_State *L, int bes) {
         return 1;
 }
 
-static int name_to_backend(const char* tag) {
-#include "backendhash.h"        
+static int name_to_backend(lua_State *L, const char* tag) {
+        if (strcmp(tag, "devpoll") == 0) return EVBACKEND_DEVPOLL;
+        if (strcmp(tag, "epoll") == 0) return EVBACKEND_EPOLL;
+        if (strcmp(tag, "kqueue") == 0) return EVBACKEND_KQUEUE;
+        if (strcmp(tag, "poll") == 0) return EVBACKEND_POLL;
+        if (strcmp(tag, "port") == 0) return EVBACKEND_PORT;
+        if (strcmp(tag, "select") == 0) return EVBACKEND_SELECT;
+        do_error(L, "Bad backend");
+        return -1;
 }
 
 
@@ -260,7 +285,7 @@ static unsigned int get_flag_of_int_or_str(lua_State *L) {
                 return luaL_checkinteger(L, 1);
         else if (lua_isstring(L, 1)) {
                 const char *name = lua_tostring(L, 1);
-                int n = name_to_backend(name);
+                int n = name_to_backend(L, name);
                 if (n < 0) {
                         lua_pushfstring(L, "Unknown backend: %s", name);
                         lua_error(L);

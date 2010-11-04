@@ -1,6 +1,6 @@
 # Lua-specific paths and libraries
 LUA_VER=	5.1
-LUA=		/usr/local/bin/lua
+LUA=		/usr/bin/env lua
 LUA_LIBPATH=	-L/usr/local/lib/
 LUA_LIBS=	-llua -lm
 LUA_INC=	-I/usr/local/include/
